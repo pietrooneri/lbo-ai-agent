@@ -19,11 +19,15 @@ BASE = dict(
 )
 
 
-def proposal(provided=(), sector="industrials", **overrides) -> ProposedAssumptions:
+FLAT_PLAN = {"revenue_growth_by_year": [], "ebitda_margin_by_year": [], "capex_pct_revenue_by_year": [],
+             "source": "estimated", "rationale": "no reason for a profile: flat"}
+
+
+def proposal(provided=(), sector="industrials", plan=None, **overrides) -> ProposedAssumptions:
     vals = {**BASE, **overrides}
     return ProposedAssumptions(
         company_name="Project Test", sector=sector, sector_rationale="test", currency="EUR",
-        key_risks=["cyclicality"],
+        key_risks=["cyclicality"], operating_plan={**FLAT_PLAN, **(plan or {})},
         **{k: {"value": v, "source": "provided" if k in provided else "estimated", "rationale": "r"}
            for k, v in vals.items()},
     )
@@ -183,3 +187,27 @@ def test_transaction_costs_are_guarded():
     assert a.transaction_fees_pct_ev == pytest.approx(0.03)          # clamped to market range
     assert a.financing_fees_pct_debt == pytest.approx(0.025)         # "2.5" meant 2.5%
     assert a.fee_amortization_years == 6 and isinstance(a.fee_amortization_years, int)
+
+
+def test_year_by_year_plan_is_guarded():
+    res = apply_guardrails(proposal(plan={"ebitda_margin_by_year": [0.15, 0.17, 0.30],
+                                          "revenue_growth_by_year": [3, 5, 6], "source": "estimated",
+                                          "rationale": "margin programme"}))
+    a = res.assumptions
+    assert a.revenue_growth_by_year == (0.03, 0.05, 0.06)                  # whole numbers read as %
+    assert a.ebitda_margin_by_year == (0.15, 0.17, 0.20)                   # year 3 clamped to industrials cap
+    assert a.capex_pct_revenue_by_year is None                             # empty list = flat
+    assert res.trace["ebitda_margin_by_year"].source == "adjusted"
+    assert any("year 3" in adj for adj in res.adjustments)
+
+
+def test_provided_plan_is_flagged_not_changed():
+    res = apply_guardrails(proposal(plan={"revenue_growth_by_year": [0.05, 0.15], "source": "provided",
+                                          "rationale": "management plan"}))
+    assert res.assumptions.revenue_growth_by_year == (0.05, 0.15)
+    assert any("revenue_growth_by_year year 2" in w for w in res.warnings)
+
+
+def test_flat_plan_changes_nothing():
+    res = apply_guardrails(proposal())
+    assert not res.assumptions.has_plan and "revenue_growth_by_year" not in res.trace

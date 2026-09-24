@@ -29,7 +29,7 @@ from typing import Callable, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from lbo_engine import Assumptions, run_model
+from lbo_engine import PLAN_DRIVERS, PLAN_FIELDS, Assumptions, run_model
 from sector_benchmarks import (
     GLOBAL_RANGES, MIN_CASH_PCT_REVENUE, MIN_EQUITY_PCT_OF_USES, MIN_SUB_SPREAD_OVER_SENIOR,
     RCF_COMMITMENT_X_EBITDA, SECTORS, SENIOR_SHARE_OF_TOTAL_LEVERAGE, benchmark_table_for_prompt,
@@ -39,7 +39,8 @@ DEFAULT_MODEL = os.environ.get("LBO_AGENT_MODEL", "claude-opus-5")
 # Server-side refusal fallback is only offered on these models.
 FALLBACK_MODELS = {"claude-opus-5", "claude-fable-5-1"}
 
-NUMERIC_FIELDS = [f.name for f in dataclasses.fields(Assumptions) if f.name != "company_name"]
+NUMERIC_FIELDS = [f.name for f in dataclasses.fields(Assumptions)
+                  if f.name != "company_name" and f.name not in PLAN_FIELDS]
 # Fields expressed as decimals; a value above 1 almost certainly means "4" was meant as 4%.
 PCT_FIELDS = {"revenue_growth", "ebitda_margin", "capex_pct_revenue", "da_pct_revenue",
               "nwc_pct_of_rev_growth", "senior_rate", "senior_mandatory_amort_pct", "sub_rate",
@@ -58,6 +59,17 @@ class Estimate(BaseModel):
         description="'provided' only if the figure is explicitly stated in the description "
                     "(after unit conversion); otherwise 'estimated'.")
     rationale: str = Field(description="1-2 sentences: the cue in the description or the benchmark used.")
+
+
+class OperatingPlan(BaseModel):
+    revenue_growth_by_year: List[float] = Field(
+        description="Revenue growth per projection year (year 1 first), decimals. Empty = flat at revenue_growth.")
+    ebitda_margin_by_year: List[float] = Field(
+        description="EBITDA margin per projection year, decimals. Empty = flat at ebitda_margin (the LTM margin).")
+    capex_pct_revenue_by_year: List[float] = Field(
+        description="Capex as a share of revenue per projection year, decimals. Empty = flat at capex_pct_revenue.")
+    source: Literal["provided", "estimated"]
+    rationale: str = Field(description="Why the plan is flat, or what drives each profile.")
 
 
 class ProposedAssumptions(BaseModel):
@@ -94,6 +106,8 @@ class ProposedAssumptions(BaseModel):
         description="Years over which financing fees and OID are amortised (the debt tenor), whole years.")
     hold_period_years: Estimate = Field(description="Whole years.")
     exit_ev_multiple: Estimate = Field(description="Exit EV / EBITDA, x. Base case: <= entry multiple.")
+    operating_plan: OperatingPlan = Field(
+        description="Year-by-year profile of growth, margin and capex; all lists empty = flat plan.")
     key_risks: List[str] = Field(description="3-5 deal-specific risks to underwrite.")
 
 
@@ -111,7 +125,12 @@ below. Stay near the middle of the sector range unless the description gives a c
 to move, and say what that reason is.
 - If the size of the company is not given, infer it from any cue available (employees, number of \
 sites, market position) and say explicitly in the rationale that size is a guess.
-- entry_ebitda must equal revenue_at_entry x ebitda_margin.
+- entry_ebitda must equal revenue_at_entry x ebitda_margin (the LTM margin).
+- operating_plan: leave all three lists empty (a flat plan) unless the description gives a concrete \
+reason for a profile over time: a ramp-up after new sites, a turnaround, a margin programme, \
+expansion capex front-loaded in the first years, a stated business plan. Then give one value per \
+year for the first 3-7 years (later years repeat the last value) and explain the profile in the \
+rationale. Stay within the sector ranges below; no hockey sticks in a base case.
 - This is a base case: exit multiple at or below the entry multiple, no heroic growth or margin story.
 - Transaction costs, unless the description gives them: M&A fees around 1.5-2.5% of EV (higher \
 for small deals), financing fees around 2-3% of the debt, Term Loan OID 0-1%, amortised over a 6-7 \
@@ -231,6 +250,12 @@ class _Guardrails:
         self.provided = {n for n in NUMERIC_FIELDS if getattr(p, n).source == "provided"}
         self.trace = {n: FieldTrace(getattr(p, n).value, getattr(p, n).source, getattr(p, n).rationale,
                                     getattr(p, n).value) for n in NUMERIC_FIELDS}
+        plan = p.operating_plan
+        self.plan = {name: list(getattr(plan, name))[:15] for name in PLAN_FIELDS}
+        self.plan_provided = plan.source == "provided"
+        for name, values in self.plan.items():
+            if values:
+                self.trace[name] = FieldTrace(list(values), plan.source, plan.rationale, list(values))
         self.adjustments: List[str] = []
         self.warnings: List[str] = []
 
@@ -350,8 +375,40 @@ class _Guardrails:
         if interest > 0 and v["entry_ebitda"] / interest < 2.0:
             self.warnings.append(f"Entry EBITDA / interest only {v['entry_ebitda'] / interest:.2f}x")
 
+    def plan_ranges(self):
+        """The year-by-year plan gets the same treatment as the flat values: percentages written as
+        whole numbers are converted, estimated years are clamped to the sector range, provided years
+        are only flagged."""
+        s, label = self.sector, self.p.sector
+        for driver in PLAN_DRIVERS:
+            name = f"{driver}_by_year"
+            values = self.plan[name]
+            if not values:
+                continue
+            lo, hi = getattr(s, driver)
+            fixed, notes = [], []
+            for year, v in enumerate(values, start=1):
+                if 1 < abs(v) <= 100:
+                    notes.append(f"year {year}: {v:g} read as {v / 100:.2%}")
+                    v = v / 100
+                if not lo - 1e-12 <= v <= hi + 1e-12:
+                    if self.plan_provided:
+                        self.warnings.append(f"{name} year {year} = {v:.2%} (provided) is outside {label} range "
+                                             f"{lo:.2%}-{hi:.2%}; kept as given")
+                    else:
+                        clamped = min(max(v, lo), hi)
+                        notes.append(f"year {year}: {v:.2%} -> {clamped:.2%} (outside {label} range)")
+                        v = clamped
+                fixed.append(v)
+            if notes:
+                self.adjustments.append(f"{name}: " + "; ".join(notes))
+                t = self.trace[name]
+                t.value, t.source, t.notes = list(fixed), "adjusted" if not self.plan_provided else t.source, \
+                    t.notes + notes
+            self.plan[name] = fixed
+
     def result(self) -> GenerationResult:
-        kwargs = dict(self.vals)
+        kwargs = dict(self.vals) | {name: (values or None) for name, values in self.plan.items()}
         for name in INT_FIELDS:
             kwargs[name] = int(kwargs[name])
         assumptions = Assumptions(company_name=self.p.company_name, **kwargs)  # engine validation
@@ -367,6 +424,7 @@ def apply_guardrails(proposal: ProposedAssumptions) -> GenerationResult:
     g.fix_units()
     g.reconcile_ebitda()          # before ranges: RCF / min cash bounds scale with EBITDA and revenue
     g.sector_and_market_ranges()
+    g.plan_ranges()
     g.cross_field_rules()
     return g.result()
 

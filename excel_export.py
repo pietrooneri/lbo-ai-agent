@@ -40,7 +40,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 
-from lbo_engine import Assumptions, run_model
+from lbo_engine import PLAN_DRIVERS, Assumptions, run_model
 
 # --- styling -----------------------------------------------------------------
 FONT = "Arial"
@@ -94,10 +94,7 @@ ASSUMPTION_LAYOUT = [
     ("entry_ebitda", "LTM EBITDA at closing (sizes price and debt)", "{cur} mm", FMT_MM, True),
     ("ltm_margin", "LTM EBITDA margin (memo)", "% of revenue", FMT_PCT, False),
     ("entry_ev_multiple", "Entry EV / LTM EBITDA", "x", FMT_X, True),
-    ("Operating plan (held flat over the projection)", None, None, None, None),
-    ("ebitda_margin", "EBITDA margin, projection years", "% of revenue", FMT_PCT, True),
-    ("revenue_growth", "Revenue growth p.a.", "%", FMT_PCT, True),
-    ("capex_pct_revenue", "Capex", "% of revenue", FMT_PCT, False),
+    ("Operating plan: growth, EBITDA margin and capex year by year on the Plan sheet", None, None, None, None),
     ("da_pct_revenue", "D&A", "% of revenue", FMT_PCT, False),
     ("nwc_pct_of_rev_growth", "Increase in NWC", "% of revenue growth", FMT_PCT, False),
     ("Financing", None, None, None, None),
@@ -177,6 +174,55 @@ def _write_assumptions(ws, a: Assumptions, audit: Optional[dict], cur: str, n_ye
     return refs
 
 
+# --- Plan sheet ----------------------------------------------------------------
+
+PLAN_LABELS = {"revenue_growth": ("Revenue growth", "% vs prior year"),
+               "ebitda_margin": ("EBITDA margin", "% of revenue"),
+               "capex_pct_revenue": ("Capex", "% of revenue")}
+PLAN_FIRST_ROW = 5
+
+
+def _write_plan(ws, a: Assumptions, audit: Optional[dict], n_years: int) -> Dict[str, int]:
+    """One blue input per driver and year, in the same columns as the LBO sheet (D = year 1)."""
+    ws.sheet_view.showGridLines = False
+    year_cols = [get_column_letter(ENTRY_COL + t) for t in range(1, n_years + 1)]
+    ws.column_dimensions["A"].width = 24
+    ws.column_dimensions["B"].width = 18
+    ws.column_dimensions["C"].width = 60
+    for col in year_cols:
+        ws.column_dimensions[col].width = 10
+    _put(ws, "A1", f"{a.company_name} — operating plan", bold=True, color=WHITE, fill=TITLE_FILL)
+    for col in ["B", "C"] + year_cols:
+        ws[f"{col}1"].fill = TITLE_FILL
+    _put(ws, "A2", "One input per year (blue): edit any year and the LBO sheet recalculates. Years after the "
+                   "last planned year repeat its value.", italic=True, color=GREY)
+    for col, text in (("A", "Driver"), ("B", "Unit"), ("C", "Source / rationale")):
+        _put(ws, f"{col}4", text, bold=True, fill=SECTION_FILL)
+    for t, col in enumerate(year_cols, start=1):
+        _put(ws, f"{col}4", t, fmt=FMT_YEAR, bold=True, fill=SECTION_FILL, color=BLACK, align="right")
+
+    trace = (audit or {}).get("trace", {})
+    rows = {}
+    for i, driver in enumerate(PLAN_DRIVERS):
+        r = PLAN_FIRST_ROW + i
+        rows[f"plan_row:{driver}"] = r
+        label, unit = PLAN_LABELS[driver]
+        _put(ws, f"A{r}", label)
+        _put(ws, f"B{r}", unit, color=GREY)
+        t = trace.get(f"{driver}_by_year") or trace.get(driver)
+        shape = "year by year" if getattr(a, f"{driver}_by_year") else "flat"
+        note = f"{t['source']} ({shape}): {t['rationale']}" if t else f"input ({shape})"
+        if t and t.get("notes"):
+            note += f"  [Guardrail: {'; '.join(t['notes'])}]"
+        _put(ws, f"C{r}", note, color=GREY)
+        ws[f"C{r}"].alignment = Alignment(wrap_text=True, vertical="top")
+        for year, col in enumerate(year_cols, start=1):
+            _put(ws, f"{col}{r}", a.plan_value(driver, year), fmt=FMT_PCT,
+                 fill=YELLOW_FILL if driver != "capex_pct_revenue" else None)
+    ws.freeze_panes = "D5"
+    return rows
+
+
 # --- LBO sheet -----------------------------------------------------------------
 
 Formula = Union[str, float, int, None, Callable[..., str]]
@@ -241,10 +287,10 @@ def _lbo_layout(A: Dict[str, str], n_years: int, last: str) -> List[Line]:
 
         L(None, "Income statement", kind="section"),
         L("revenue", "Revenue", entry=f"={A['revenue_at_entry']}",
-          year=lambda c, p, R: f"={p}{R['revenue']}*(1+{A['revenue_growth']})", bold=True),
+          year=lambda c, p, R: f"={p}{R['revenue']}*(1+Plan!{c}${A['plan_row:revenue_growth']})", bold=True),
         L("rev_g", "  growth", year=lambda c, p, R: f"={c}{R['revenue']}/{p}{R['revenue']}-1", fmt=FMT_PCT, memo=True),
         L("ebitda", "EBITDA", entry=f"={A['entry_ebitda']}",
-          year=lambda c, p, R: f"={c}{R['revenue']}*{A['ebitda_margin']}", bold=True),
+          year=lambda c, p, R: f"={c}{R['revenue']}*Plan!{c}${A['plan_row:ebitda_margin']}", bold=True),
         L("margin", "  margin", entry=lambda R: f"=C{R['ebitda']}/C{R['revenue']}",
           year=lambda c, p, R: f"={c}{R['ebitda']}/{c}{R['revenue']}", fmt=FMT_PCT, memo=True),
         L("da", "Less: D&A", year=lambda c, p, R: f"={c}{R['revenue']}*{A['da_pct_revenue']}"),
@@ -267,7 +313,8 @@ def _lbo_layout(A: Dict[str, str], n_years: int, last: str) -> List[Line]:
         L("cf_ni", "Net income", year=lambda c, p, R: f"={c}{R['ni']}"),
         L("cf_da", "Plus: D&A", year=lambda c, p, R: f"={c}{R['da']}"),
         L("cf_amort", "Plus: fee + OID amortisation (non-cash)", year=lambda c, p, R: f"={c}{R['fee_amort']}"),
-        L("capex", "Less: capex", year=lambda c, p, R: f"={c}{R['revenue']}*{A['capex_pct_revenue']}"),
+        L("capex", "Less: capex",
+          year=lambda c, p, R: f"={c}{R['revenue']}*Plan!{c}${A['plan_row:capex_pct_revenue']}"),
         L("nwc", "Less: increase in NWC",
           year=lambda c, p, R: f"=({c}{R['revenue']}-{p}{R['revenue']})*{A['nwc_pct_of_rev_growth']}"),
         L("fcf", "Free cash flow",
@@ -370,7 +417,7 @@ def lbo_rows(a: Assumptions) -> Dict[str, int]:
     """Row number of every keyed line on the LBO sheet (for tests and downstream readers)."""
     n_years = max(MIN_PROJECTION_YEARS, a.hold_period_years)
     last = get_column_letter(ENTRY_COL + n_years)
-    dummy = {f.name: "X" for f in dataclasses.fields(Assumptions)}
+    dummy = {f.name: "X" for f in dataclasses.fields(Assumptions)} | {f"plan_row:{d}": 0 for d in PLAN_DRIVERS}
     return _assign_rows(_lbo_layout(dummy, n_years, last))
 
 
@@ -563,7 +610,8 @@ def _write_audit(ws, a: Assumptions, audit: Optional[dict], R: Dict[str, int], c
         section(f"Scenario: {sc['name']} (built on '{sc['based_on']}')")
         text("Rationale", sc["rationale"])
         for name, value in sc["overrides"].items():
-            text("Changed vs base", f"{name} = {value:g}")
+            shown = "/".join(f"{x:g}" for x in value) if isinstance(value, (list, tuple)) else f"{value:g}"
+            text("Changed vs base", f"{name} = {shown}")
 
     if audit:
         section("Sector call (Claude)")
@@ -599,10 +647,12 @@ def export_to_excel(a: Assumptions, path: str, audit: Optional[dict] = None) -> 
     wb = Workbook()
     ws_a = wb.active
     ws_a.title = "Assumptions"
+    ws_plan = wb.create_sheet("Plan")
     ws_lbo = wb.create_sheet("LBO")
     ws_audit = wb.create_sheet("Audit")
 
     A = _write_assumptions(ws_a, a, audit, cur, n_years)
+    A |= _write_plan(ws_plan, a, audit, n_years)
     R = _write_lbo(ws_lbo, a, A, cur, n_years)
     _write_audit(ws_audit, a, audit, R, cur)
 
@@ -612,7 +662,7 @@ def export_to_excel(a: Assumptions, path: str, audit: Optional[dict] = None) -> 
         ws.page_setup.fitToHeight = 0
         ws.sheet_properties.pageSetUpPr.fitToPage = True
 
-    wb.active = 1                        # open on the LBO sheet
+    wb.active = 2                        # open on the LBO sheet
     wb.calculation.fullCalcOnLoad = True  # openpyxl stores no cached values: force Excel to compute
     wb.save(path)
     return path

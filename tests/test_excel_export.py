@@ -10,7 +10,8 @@ from openpyxl.utils import get_column_letter
 from pycel import ExcelCompiler
 
 from assumption_generator import apply_guardrails
-from excel_export import ASSUMPTION_LAYOUT, export_to_excel, lbo_rows
+from excel_export import ASSUMPTION_LAYOUT, PLAN_FIRST_ROW, export_to_excel, lbo_rows
+from lbo_engine import PLAN_DRIVERS
 from lbo_engine import Assumptions, run_model
 from test_assumption_generator import proposal
 from test_lbo_engine import SCENARIOS
@@ -49,7 +50,12 @@ class Book:
 
     def set(self, name, value):
         self.xl.evaluate("Audit!C10")  # pycel only lets you edit cells it has already loaded
-        self.xl.set_value(_assumption_cell(name), value)
+        if name in PLAN_DRIVERS:       # year-by-year driver: set every year on the Plan sheet
+            row = PLAN_FIRST_ROW + PLAN_DRIVERS.index(name)
+            for t in range(1, 11):
+                self.xl.set_value(f"Plan!{get_column_letter(3 + t)}{row}", value)
+        else:
+            self.xl.set_value(_assumption_cell(name), value)
 
 
 def _export(tmp_path, a, audit=None):
@@ -89,8 +95,8 @@ def test_workbook_from_generator_output(tmp_path):
     _assert_matches_engine(book, res.assumptions)
     assert book.xl.evaluate("Audit!C10").startswith("Matches the Python engine")
     wb = openpyxl.load_workbook(tmp_path / "lbo.xlsx")
-    notes = [c.value for c in wb["Assumptions"]["E"] if c.value]
-    assert any("Guardrail" in n and "Claude proposed 0.35" in n for n in notes)
+    notes = [c.value for c in wb["Plan"]["C"] if c.value]           # margin now lives on the Plan sheet
+    assert any("Guardrail" in n and "outside industrials margin range" in n for n in notes)
 
 
 @pytest.mark.parametrize("name, value", [
@@ -132,3 +138,12 @@ def test_lbo_sheet_has_no_hardcoded_numbers(tmp_path):
                  if isinstance(c.value, (int, float)) and not isinstance(c.value, bool)
                  and c.row not in sens_rows]
     assert sorted(constants) == sorted([f"C{R['years']}", f"C{R['rcf_end']}"])
+
+
+def test_editing_one_year_of_the_plan_reprices_that_year_only(tmp_path):
+    base = SCENARIOS["base"]
+    book = _export(tmp_path, base)
+    book.xl.evaluate("Audit!C10")
+    book.xl.set_value(f"Plan!F{PLAN_FIRST_ROW + 1}", 0.15)          # margin, year 3 only
+    flexed = dataclasses.replace(base, ebitda_margin_by_year=[0.20, 0.20, 0.15, 0.20])
+    assert book.lbo("moic") == pytest.approx(run_model(flexed)["returns"]["moic"], abs=1e-9)

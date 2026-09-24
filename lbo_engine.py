@@ -32,6 +32,9 @@ Convention notes (matters for defending this in an interview):
   (tax = max(EBT, 0) * rate).
 - Only two equity cash flows (entry, exit — no dividends), so
   IRR = MOIC ^ (1 / years) - 1 exactly; no numerical solver needed.
+- Year-by-year plan: revenue growth, EBITDA margin and capex can be given per
+  year (ramp-ups, margin programmes, expansion capex); otherwise they are flat.
+  When a year-by-year list is given, the flat value of that driver is ignored.
 - Entry terms vs operating plan: entry_ebitda (LTM at closing) sizes the price
   and the debt; ebitda_margin drives the projection years only. In a base case
   they coincide (flat margins). A post-closing downside lowers ebitda_margin
@@ -40,7 +43,12 @@ Convention notes (matters for defending this in an interview):
 """
 
 from dataclasses import dataclass, fields
-from typing import List
+from typing import List, Optional, Tuple
+
+# Operating drivers that can vary by year. `<name>_by_year` holds one value per projection
+# year (year t uses element t); years beyond the list repeat its last value; None = flat.
+PLAN_DRIVERS = ("revenue_growth", "ebitda_margin", "capex_pct_revenue")
+PLAN_FIELDS = tuple(f"{d}_by_year" for d in PLAN_DRIVERS)
 
 
 @dataclass
@@ -78,11 +86,23 @@ class Assumptions:
     senior_oid_pct: float = 0.0              # Term Loan issued below par: 1% = funded at 99, repaid at 100
     fee_amortization_years: int = 6          # financing fees + OID amortised over the debt tenor
 
+    # Year-by-year operating plan (optional; see PLAN_DRIVERS)
+    revenue_growth_by_year: Optional[Tuple[float, ...]] = None
+    ebitda_margin_by_year: Optional[Tuple[float, ...]] = None
+    capex_pct_revenue_by_year: Optional[Tuple[float, ...]] = None
+
     # Exit
     hold_period_years: int = 5
     exit_ev_multiple: float = 8.0        # base case = entry multiple
 
     def __post_init__(self):
+        for name in PLAN_FIELDS:                 # lists from JSON -> tuples; [] -> flat
+            value = getattr(self, name)
+            if value is not None and not isinstance(value, (str, bytes)):
+                try:
+                    setattr(self, name, tuple(value) or None)
+                except TypeError:
+                    pass                         # reported by validation_errors
         errors = self.validation_errors()
         if errors:
             raise ValueError("Invalid LBO assumptions:\n  - " + "\n  - ".join(errors))
@@ -94,10 +114,21 @@ class Assumptions:
         e = []
         for f in fields(self):
             v = getattr(self, f.name)
-            if f.name != "company_name" and (isinstance(v, bool) or not isinstance(v, (int, float))):
+            if f.name in PLAN_FIELDS:
+                if v is not None and (not isinstance(v, tuple) or not 1 <= len(v) <= 15 or any(
+                        isinstance(x, bool) or not isinstance(x, (int, float)) for x in v)):
+                    e.append(f"{f.name} must be a list of 1-15 numbers (one per year), got {v!r}")
+            elif f.name != "company_name" and (isinstance(v, bool) or not isinstance(v, (int, float))):
                 e.append(f"{f.name} must be a number, got {v!r}")
         if e:
             return e
+        bounds = {"revenue_growth": (-0.5, 1.0, "between -50% and +100%"),
+                  "ebitda_margin": (0.0, 1.0, "between 0 and 1"),
+                  "capex_pct_revenue": (0.0, 1.0, "between 0 and 1")}
+        for driver, (lo, hi, text) in bounds.items():
+            for i, x in enumerate(getattr(self, f"{driver}_by_year") or ()):
+                if not lo < x < hi and not (driver == "capex_pct_revenue" and x == 0):
+                    e.append(f"{driver}_by_year[{i}] = {x}: must be {text} (decimals)")
 
         for name in ("entry_ebitda", "entry_ev_multiple", "revenue_at_entry", "exit_ev_multiple"):
             if getattr(self, name) <= 0:
@@ -132,6 +163,15 @@ class Assumptions:
         if equity <= 0:
             e.append("total debt >= total uses: sponsor equity would be zero or negative")
         return e
+
+    def plan_value(self, driver: str, year: int) -> float:
+        """Value of an operating driver in projection year `year` (1-based)."""
+        seq = getattr(self, f"{driver}_by_year")
+        return getattr(self, driver) if not seq else seq[min(year, len(seq)) - 1]
+
+    @property
+    def has_plan(self) -> bool:
+        return any(getattr(self, name) for name in PLAN_FIELDS)
 
 
 @dataclass
@@ -205,8 +245,8 @@ def run_lbo(a: Assumptions) -> List[YearResult]:
 
     for year in range(1, a.hold_period_years + 1):
         prior_revenue = revenue
-        revenue = revenue * (1 + a.revenue_growth)
-        ebitda = revenue * a.ebitda_margin
+        revenue = revenue * (1 + a.plan_value("revenue_growth", year))
+        ebitda = revenue * a.plan_value("ebitda_margin", year)
         da = revenue * a.da_pct_revenue
         ebit = ebitda - da
 
@@ -220,7 +260,7 @@ def run_lbo(a: Assumptions) -> List[YearResult]:
         tax = max(ebt, 0) * a.tax_rate
         net_income = ebt - tax
 
-        capex = revenue * a.capex_pct_revenue
+        capex = revenue * a.plan_value("capex_pct_revenue", year)
         nwc_change = (revenue - prior_revenue) * a.nwc_pct_of_rev_growth
 
         fcf_pre_sweep = net_income + da + cost_amortization - capex - nwc_change   # amortisation is non-cash

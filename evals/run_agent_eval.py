@@ -53,7 +53,8 @@ STOPWORDS = {
     "de": {"der", "die", "und", "das", "mit", "für", "nicht", "ist", "den", "auf", "bei", "wir"},
 }
 OPERATING_FIELDS = {"ebitda_margin", "revenue_growth", "capex_pct_revenue", "nwc_pct_of_rev_growth",
-                    "exit_ev_multiple"}
+                    "exit_ev_multiple", "revenue_growth_by_year", "ebitda_margin_by_year",
+                    "capex_pct_revenue_by_year"}
 
 
 # ---------------------------------------------------------------------------

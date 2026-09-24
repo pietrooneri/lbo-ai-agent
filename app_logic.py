@@ -122,7 +122,9 @@ PCT_FIELDS = {"ebitda_margin", "revenue_growth", "capex_pct_revenue", "da_pct_re
               "transaction_fees_pct_ev", "financing_fees_pct_debt", "senior_oid_pct"}
 
 
-def fmt_value(field_name: str, v: float, lang: str = "it") -> str:
+def fmt_value(field_name: str, v, lang: str = "it") -> str:
+    if field_name.endswith("_by_year"):                       # year-by-year profile: 14,0% → 12,0% → 11,0%
+        return " → ".join(fmt_value(field_name[: -len("_by_year")], x, lang) for x in (v or ()))
     if field_name in PCT_FIELDS:
         return pct(v, lang)
     if field_name.endswith("_x") or "multiple" in field_name:
@@ -330,6 +332,14 @@ def t(lang: str, key: str, **kw) -> str:
     return TEXT[lang][key].format(**kw)
 
 
+def field_label(name: str, lang: str = "it") -> str:
+    labels = FIELD_LABELS[lang]
+    if name.endswith("_by_year"):
+        base = labels.get(name[: -len("_by_year")], name)
+        return f"{base} {'anno per anno' if lang == 'it' else 'by year'}"
+    return labels.get(name, name)
+
+
 # ---------------------------------------------------------------------------
 # Guided form -> request text
 # ---------------------------------------------------------------------------
@@ -376,8 +386,9 @@ def progress_message(tool: str, args: dict, lang: str = "it") -> str:
         return t(lang, "p_base")
     if tool == "run_scenario":
         name = str(args.get("name", "")).replace("_", " ")
-        changes = ", ".join(f"{labels.get(k, k)} {fmt_value(k, v, lang)}"
-                            for k, v in (args.get("overrides") or {}).items())
+        items = list((args.get("overrides") or {}).items()) + [
+            (f"{d}_by_year", v) for d, v in (args.get("plan") or {}).items()]
+        changes = ", ".join(f"{field_label(k, lang)} {fmt_value(k, v, lang)}" for k, v in items)
         return t(lang, "p_scenario", n=name) + (f" ({changes})" if changes else "")
     if tool == "solve_for_target":
         what = labels.get(args.get("variable", ""), args.get("variable", ""))
@@ -454,7 +465,7 @@ def table_rows(session: DealSession, lang: str = "it") -> List[dict]:
     rows = []
     for s in scenario_summaries(session):
         changes = "—" if s["scenario"] == "base" else ", ".join(
-            f"{labels.get(k, k)} {fmt_value(k, v, lang)}" for k, v in s["overrides"].items()
+            f"{field_label(k, lang)} {fmt_value(k, v, lang)}" for k, v in s["overrides"].items()
             if k not in ("entry_ebitda", "senior_leverage_x")) or "—"
         rows.append({
             "id": s["scenario"], "scenario": pretty_scenario(s["scenario"], lang), "changes": changes,

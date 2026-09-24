@@ -120,8 +120,9 @@ def test_export_stays_in_output_dir_and_records_scenario(session, tmp_path):
     path = res["path"]
     assert path == str(tmp_path / "out" / "evil_name.xlsx")
     wb = openpyxl.load_workbook(path)
-    assumptions = {r[0].value: r for r in wb["Assumptions"].iter_rows(min_row=5) if r[0].value}
-    assert assumptions["Revenue growth p.a."][3].value == "scenario"
+    plan = {r[0].value: r for r in wb["Plan"].iter_rows(min_row=5) if r[0].value}
+    assert plan["Revenue growth"][2].value.startswith("scenario (flat)")
+    assert plan["Revenue growth"][3].value == 0.0                        # year 1 on the Plan sheet
     audit_text = [c.value for c in wb["Audit"]["C"] if isinstance(c.value, str)]
     assert "flat sales in a recession" in audit_text
     assert session.export_excel("base")["path"].endswith("Project_Test_base.xlsx")
@@ -234,3 +235,41 @@ def test_scenario_can_change_transaction_costs(session):
     assert a.senior_oid_pct == 0.015 and a.fee_amortization_years == 5
     base = session._summary("base", session.scenarios["base"].assumptions)
     assert res["entry_fees_and_oid"] > base["entry_fees_and_oid"] and res["irr"] < base["irr"]
+
+
+def test_scenario_with_a_year_by_year_profile(session):
+    res = session.run_scenario("gradual_erosion", {}, "margin erodes over three years",
+                               plan={"ebitda_margin": [0.14, 0.12, 0.11]})
+    a = session.scenarios["gradual_erosion"].assumptions
+    assert a.ebitda_margin_by_year == (0.14, 0.12, 0.11)
+    assert res["operating_plan"]["ebitda_margin"] == [0.14, 0.12, 0.11, 0.11, 0.11]
+    assert res["overrides_vs_base"]["ebitda_margin_by_year"] == (0.14, 0.12, 0.11)
+    assert res["entry_terms"].startswith("as signed")
+    # a flat override afterwards replaces the profile
+    session.run_scenario("flat_again", {"ebitda_margin": 0.13}, "flat", based_on="gradual_erosion")
+    assert session.scenarios["flat_again"].assumptions.ebitda_margin_by_year is None
+
+
+def test_plan_errors_are_actionable(session):
+    with pytest.raises(ToolError) as exc:
+        session.run_scenario("bad", {"ebitda_margin_by_year": 0.1}, "x")
+    assert "`plan`" in exc.value.content
+    with pytest.raises(ToolError) as exc:
+        session.run_scenario("bad", {}, "x", plan={"nwc": [0.1]})
+    assert "Unknown plan driver" in exc.value.content
+
+
+def test_plan_scenario_exports_and_reloads(session, tmp_path):
+    session.run_scenario("ramp", {}, "new plants ramp up", plan={"revenue_growth": [0.02, 0.06, 0.08]})
+    path = session.export_excel("ramp")["path"]
+    import openpyxl
+    plan = {r[0].value: r for r in openpyxl.load_workbook(path)["Plan"].iter_rows(min_row=5) if r[0].value}
+    assert [c.value for c in plan["Revenue growth"][3:8]] == [0.02, 0.06, 0.08, 0.08, 0.08]
+    reloaded = DealSession.load(session.save(), str(tmp_path))
+    assert reloaded.scenarios["ramp"].assumptions.revenue_growth_by_year == (0.02, 0.06, 0.08)
+
+
+def test_tool_schema_exposes_plan():
+    from lbo_agent import make_tools
+    schema = next(t for t in make_tools(DealSession()) if t.to_dict()["name"] == "run_scenario").to_dict()
+    assert "plan" in schema["input_schema"]["properties"]

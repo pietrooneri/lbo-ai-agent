@@ -44,7 +44,7 @@ from assumption_generator import (
     generate_assumptions,
 )
 from excel_export import export_to_excel
-from lbo_engine import Assumptions, run_model
+from lbo_engine import PLAN_DRIVERS, PLAN_FIELDS, Assumptions, run_model
 from sector_benchmarks import GLOBAL_RANGES, SECTORS
 
 MAX_TOOL_ROUNDS = 25
@@ -56,6 +56,13 @@ PRICES_PER_MTOK = {
     "claude-opus-5": (5.0, 25.0), "claude-opus-5-5": (4.0, 20.0), "claude-opus-4-8": (5.0, 25.0),
     "claude-sonnet-5": (2.0, 10.0), "claude-haiku-4-5": (1.0, 5.0), "claude-fable-5-1": (10.0, 50.0),
 }
+
+
+def fmt_number(v) -> str:
+    """g-format a value or a year-by-year list (audit notes)."""
+    if isinstance(v, (list, tuple)):
+        return "/".join(f"{x:g}" for x in v)
+    return "flat" if v is None else f"{v:g}"
 
 
 def usage_cost_usd(usage_log: List[dict]) -> Optional[float]:
@@ -201,14 +208,20 @@ class DealSession:
         return self.scenarios[name]
 
     @staticmethod
-    def apply_overrides(base: Assumptions, overrides: Dict[str, float], reprice_entry: bool = False) -> Assumptions:
+    def apply_overrides(base: Assumptions, overrides: Dict[str, float], reprice_entry: bool = False,
+                        plan: Optional[Dict[str, List[float]]] = None) -> Assumptions:
         """Operating overrides change the projection only: price and debt stay as signed
         (they are multiples of LTM EBITDA, which does not move). reprice_entry=True is the
         pre-signing view: the new margin is already true today, so LTM EBITDA -- and with it
         price and debt -- follow it."""
         unknown = sorted(set(overrides) - set(NUMERIC_FIELDS))
         if unknown:
-            raise ToolError(f"Unknown assumption(s) {unknown}. Valid names: {NUMERIC_FIELDS}")
+            raise ToolError(f"Unknown assumption(s) {unknown}. Valid names: {NUMERIC_FIELDS}. "
+                            f"Year-by-year values go in `plan`, not `overrides`.")
+        plan = plan or {}
+        bad_plan = sorted(set(plan) - set(PLAN_DRIVERS))
+        if bad_plan:
+            raise ToolError(f"Unknown plan driver(s) {bad_plan}. Valid: {list(PLAN_DRIVERS)}")
         if reprice_entry and "entry_ebitda" in overrides:
             raise ToolError("Pass either entry_ebitda or reprice_entry=true, not both: "
                             "reprice_entry derives entry_ebitda from revenue x the new margin.")
@@ -218,6 +231,11 @@ class DealSession:
         if "total_leverage_x" in overrides and "senior_leverage_x" not in overrides and base.total_leverage_x > 0:
             vals["senior_leverage_x"] = overrides["total_leverage_x"] * base.senior_leverage_x / base.total_leverage_x
         vals.update(overrides)
+        for driver in PLAN_DRIVERS:
+            if driver in plan:                              # a new year-by-year profile
+                vals[f"{driver}_by_year"] = list(plan[driver]) or None
+            elif driver in overrides:                       # a flat value replaces any profile
+                vals[f"{driver}_by_year"] = None
         if "entry_ebitda" not in overrides:
             if reprice_entry:
                 vals["entry_ebitda"] = vals["revenue_at_entry"] * vals["ebitda_margin"]
@@ -236,6 +254,14 @@ class DealSession:
         sector = SECTORS[self.generation.sector]
         notes = []
         for name in fields_to_check:
+            if name in PLAN_FIELDS:
+                driver = name[: -len("_by_year")]
+                lo, hi = getattr(sector, driver)
+                for year, v in enumerate(getattr(a, name) or (), start=1):
+                    if not lo <= v <= hi:
+                        notes.append(f"{driver} year {year} = {v:g} is outside the {self.generation.sector} "
+                                     f"benchmark {lo:g}-{hi:g}")
+                continue
             rng = getattr(sector, name, None) or GLOBAL_RANGES.get(name)
             v = getattr(a, name)
             if rng and not rng[0] <= v <= rng[1]:
@@ -258,7 +284,9 @@ class DealSession:
             "entry_debt": round(su["total_debt"], 1),
             "entry_fees_and_oid": round(su["uses"]["transaction_fees"] + su["capitalised_financing_costs"], 1),
             "ltm_margin": round(a.entry_ebitda / a.revenue_at_entry, 4),
-            "projected_margin": round(a.ebitda_margin, 4),
+            "projected_margin": round(a.plan_value("ebitda_margin", 1), 4),
+            **({"operating_plan": {d: [round(a.plan_value(d, t), 4) for t in range(1, a.hold_period_years + 1)]
+                                   for d in PLAN_DRIVERS}} if a.has_plan else {}),
             "exit_ev": round(r["exit_ev"], 1),
             "exit_equity": round(r["exit_equity_value"], 1),
             "exit_net_debt": round(r["exit_net_debt"], 1),
@@ -310,16 +338,17 @@ class DealSession:
         }
 
     def run_scenario(self, name: str, overrides: Dict[str, float], rationale: str, based_on: str = "base",
-                     reprice_entry: bool = False) -> dict:
+                     reprice_entry: bool = False, plan: Optional[Dict[str, List[float]]] = None) -> dict:
         if not re.fullmatch(r"[A-Za-z0-9_\-]{1,40}", name):
             raise ToolError("Scenario name: 1-40 letters, digits, '_' or '-'.")
         if name == "base":
             raise ToolError("'base' is the generated base case; pick another name.")
         parent = self._scenario(based_on)
-        a = self.apply_overrides(parent.assumptions, overrides, reprice_entry)
+        a = self.apply_overrides(parent.assumptions, overrides, reprice_entry, plan)
         # Record what actually moved (incl. knock-on changes such as the senior tranche),
         # not just what was asked for.
-        changed = {k: getattr(a, k) for k in NUMERIC_FIELDS if getattr(a, k) != getattr(parent.assumptions, k)}
+        changed = {k: getattr(a, k) for k in NUMERIC_FIELDS + list(PLAN_FIELDS)
+                   if getattr(a, k) != getattr(parent.assumptions, k)}
         merged = {**parent.overrides, **changed}
         self.scenarios[name] = Scenario(name, a, based_on, rationale, merged)
         result = self._summary(name, a)
@@ -420,7 +449,8 @@ class DealSession:
                 t = audit["trace"].setdefault(name, {"value": value, "source": "scenario", "rationale": "",
                                                       "llm_value": value, "notes": []})   # older projects
                 t.update(source="scenario", rationale=s.rationale, value=value,
-                         notes=t["notes"] + [f"scenario '{s.name}': base {getattr(base, name):g} -> {value:g}"])
+                         notes=t["notes"] + [f"scenario '{s.name}': base {fmt_number(getattr(base, name))} -> "
+                                             f"{fmt_number(value)}"])
             audit["trace"]["entry_ebitda"]["value"] = s.assumptions.entry_ebitda
             audit["scenario"] = {"name": s.name, "based_on": s.based_on, "rationale": s.rationale,
                                  "overrides": s.overrides}
@@ -453,7 +483,7 @@ def make_tools(session: DealSession):
 
     @beta_tool
     def run_scenario(name: str, overrides: Dict[str, float], rationale: str, based_on: str = "base",
-                     reprice_entry: bool = False) -> str:
+                     reprice_entry: bool = False, plan: Optional[Dict[str, List[float]]] = None) -> str:
         """Run the LBO engine on a variant of an existing scenario. Call this for downside / upside
         cases, a revised capital structure, or any 'what if' the user asks. Only the listed
         assumptions change; everything else is inherited from `based_on`. By default the deal
@@ -476,8 +506,12 @@ def make_tools(session: DealSession):
             reprice_entry: Pre-signing view: true when the new margin is already the company's current
                 (LTM) margin, so price and debt are re-sized on it. Leave false for post-closing
                 downsides and upsides.
+            plan: Year-by-year profile, driver -> list of values for years 1, 2, 3... (later years repeat
+                the last value). Drivers: revenue_growth, ebitda_margin, capex_pct_revenue. Use it when
+                the change builds up over time (a margin that erodes gradually, a recovery, expansion
+                capex); a flat value in `overrides` replaces any profile of that driver.
         """
-        return as_json(session.run_scenario(name, overrides, rationale, based_on, reprice_entry))
+        return as_json(session.run_scenario(name, overrides, rationale, based_on, reprice_entry, plan))
 
     @beta_tool
     def solve_for_target(variable: str, metric: str, target: float, scenario: str = "base",
@@ -489,7 +523,8 @@ def make_tools(session: DealSession):
 
         Args:
             variable: One of entry_ev_multiple, exit_ev_multiple, total_leverage_x, revenue_growth,
-                ebitda_margin (projected margin, price and debt as signed), senior_rate.
+                ebitda_margin (projected margin, price and debt as signed), senior_rate. Solving on
+                revenue_growth or ebitda_margin uses one flat value for every year.
             metric: "irr" or "moic".
             target: Target value, IRR as a decimal (0.20 = 20%), MOIC in x (2.5).
             scenario: Scenario to solve on (default "base").
@@ -539,6 +574,9 @@ bury it: run a revised structure as a separate scenario and say which one you wo
 - Unless the user asks for something narrower, run a downside scenario that reflects the \
 company's specific risks (not a generic haircut), and an upside only if it adds information. \
 State the rationale of every scenario in one sentence.
+- Use a year-by-year `plan` when a change realistically builds up over time (margins eroding over \
+two or three years, a recovery, a ramp-up of new sites, front-loaded expansion capex); a flat \
+override is fine for a simple sensitivity.
 - Keep the scenario set small and readable: at most 4-5 scenarios in total (base included) unless \
 the user asks for more. In follow-up questions, answer with one new scenario (or by reusing an \
 existing one) instead of re-running variants of every earlier case.

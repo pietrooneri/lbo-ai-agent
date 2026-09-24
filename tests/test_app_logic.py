@@ -165,3 +165,10 @@ def test_old_projects_say_cost_was_not_recorded(tmp_path):
                       "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}]
     (tmp_path / "Old_deal.json").write_text(_json.dumps(data))
     assert L.list_projects(tmp_path)[0]["cost"] == "circa 0,75 $"
+
+
+def test_profiles_are_shown_as_a_sequence():
+    assert L.fmt_value("ebitda_margin_by_year", (0.14, 0.12), "it") == "14,0% → 12,0%"
+    assert L.progress_message("run_scenario", {"name": "downside", "overrides": {},
+                                               "plan": {"ebitda_margin": [0.14, 0.12]}}, "en") == \
+        "Running the «downside» scenario (margin by year 14.0% → 12.0%)"

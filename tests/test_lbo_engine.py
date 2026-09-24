@@ -25,6 +25,10 @@ SCENARIOS = {
                                  senior_leverage_x=5.5),
     "one_year_hold": Assumptions(hold_period_years=1),
     # Transaction costs, amortisation period shorter than the hold (charge stops in year 5)
+    # Year-by-year plan: ramp-up growth, margin programme, front-loaded capex; the growth list is
+    # shorter than the hold (last value repeats), margin list longer (extra years ignored)
+    "year_by_year": Assumptions(revenue_growth_by_year=[0.02, 0.05, 0.08], ebitda_margin_by_year=[0.18, 0.19, 0.20, 0.21, 0.22, 0.22],
+                                capex_pct_revenue_by_year=[0.06, 0.05, 0.03]),
     "fees_oid": Assumptions(transaction_fees_pct_ev=0.02, financing_fees_pct_debt=0.025, senior_oid_pct=0.01,
                             fee_amortization_years=4),
 }
@@ -171,5 +175,31 @@ def test_financing_cost_amortisation_is_non_cash_and_tax_deductible():
     ({"fee_amortization_years": 0}, "fee_amortization_years"),
 ])
 def test_invalid_fee_inputs(overrides, message):
+    with pytest.raises(ValueError, match=message):
+        dataclasses.replace(Assumptions(), **overrides)
+
+
+def test_year_by_year_plan_drives_each_year():
+    a = SCENARIOS["year_by_year"]
+    years = run_lbo(a)
+    growth = [y.revenue / p - 1 for y, p in zip(years, [750] + [y.revenue for y in years])]
+    assert growth == pytest.approx([0.02, 0.05, 0.08, 0.08, 0.08])          # last value repeats
+    assert [y.ebitda / y.revenue for y in years] == pytest.approx([0.18, 0.19, 0.20, 0.21, 0.22])
+    assert [y.capex / y.revenue for y in years] == pytest.approx([0.06, 0.05, 0.03, 0.03, 0.03])
+    assert a.has_plan and not Assumptions().has_plan
+
+
+def test_flat_plan_equals_scalar_inputs():
+    flat = Assumptions(revenue_growth_by_year=[0.04] * 5, ebitda_margin_by_year=[0.20],
+                       capex_pct_revenue_by_year=(0.03,))
+    assert run_model(flat)["returns"]["irr"] == pytest.approx(run_model(Assumptions())["returns"]["irr"])
+
+
+@pytest.mark.parametrize("overrides, message", [
+    ({"ebitda_margin_by_year": [0.2, 1.5]}, r"ebitda_margin_by_year\[1\]"),
+    ({"revenue_growth_by_year": [0.05] * 20}, "1-15 numbers"),
+    ({"capex_pct_revenue_by_year": "0.03"}, "list of"),
+])
+def test_invalid_plan_inputs(overrides, message):
     with pytest.raises(ValueError, match=message):
         dataclasses.replace(Assumptions(), **overrides)
