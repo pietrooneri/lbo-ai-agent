@@ -81,6 +81,16 @@ def _assert_matches_engine(book, a):
     assert (book.lbo("flag_rcf") != "-") == any("RCF" in w for w in ret["warnings"])
     assert (book.lbo("flag_cov") != "-") == any("coverage" in w for w in ret["warnings"])
     assert book.xl.evaluate("LBO!C3") == "OK"
+    cov = ret["covenants"]
+    if cov:
+        for t in cov["tests"]:
+            for key, row in (("leverage_headroom", "cv_lev_head"), ("cover_headroom", "cv_cov_head")):
+                if t[key] is not None:
+                    assert book.year(row, t["year"]) == pytest.approx(t[key], abs=1e-9), (key, t["year"])
+            assert book.year("cv_test", t["year"]) == ("BREACH" if t["breach"] else "OK")
+        assert book.lbo("cv_first") == (cov["first_breach_year"] or "none")
+        assert book.lbo("cv_min_head") == pytest.approx(cov["min_headroom"], abs=1e-9)
+    assert (book.lbo("flag_cov_breach") != "-") == any("Covenant breach" in w for w in ret["warnings"])
 
 
 @pytest.mark.parametrize("name", SCENARIOS)

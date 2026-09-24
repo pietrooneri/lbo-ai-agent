@@ -35,6 +35,11 @@ Convention notes (matters for defending this in an interview):
 - Year-by-year plan: revenue growth, EBITDA margin and capex can be given per
   year (ramp-ups, margin programmes, expansion capex); otherwise they are flat.
   When a year-by-year list is given, the flat value of that driver is ignored.
+- Maintenance covenants (optional): maximum net debt / EBITDA (with step-downs)
+  and minimum EBITDA / cash interest, tested at each year-end. Headroom is the
+  EBITDA cushion: how far EBITDA can fall before the test fails (1 - actual /
+  limit for leverage, 1 - limit / actual for cover). Breaches are flagged, not
+  modelled (no waiver fee, repricing or default mechanics).
 - Entry terms vs operating plan: entry_ebitda (LTM at closing) sizes the price
   and the debt; ebitda_margin drives the projection years only. In a base case
   they coincide (flat margins). A post-closing downside lowers ebitda_margin
@@ -49,6 +54,9 @@ from typing import List, Optional, Tuple
 # year (year t uses element t); years beyond the list repeat its last value; None = flat.
 PLAN_DRIVERS = ("revenue_growth", "ebitda_margin", "capex_pct_revenue")
 PLAN_FIELDS = tuple(f"{d}_by_year" for d in PLAN_DRIVERS)
+# All per-year lists (operating plan + covenant step-downs) share the same conventions.
+SCHEDULE_FIELDS = PLAN_FIELDS + ("max_net_leverage_by_year",)
+COVENANT_FIELDS = ("max_net_leverage", "min_interest_cover")
 
 
 @dataclass
@@ -91,12 +99,17 @@ class Assumptions:
     ebitda_margin_by_year: Optional[Tuple[float, ...]] = None
     capex_pct_revenue_by_year: Optional[Tuple[float, ...]] = None
 
+    # Maintenance covenants, tested at each year-end (0 = no covenant)
+    max_net_leverage: float = 0.0                                  # net debt / EBITDA ceiling, x
+    max_net_leverage_by_year: Optional[Tuple[float, ...]] = None   # step-downs; last value repeats
+    min_interest_cover: float = 0.0                                # EBITDA / cash interest floor, x
+
     # Exit
     hold_period_years: int = 5
     exit_ev_multiple: float = 8.0        # base case = entry multiple
 
     def __post_init__(self):
-        for name in PLAN_FIELDS:                 # lists from JSON -> tuples; [] -> flat
+        for name in SCHEDULE_FIELDS:             # lists from JSON -> tuples; [] -> flat
             value = getattr(self, name)
             if value is not None and not isinstance(value, (str, bytes)):
                 try:
@@ -114,7 +127,7 @@ class Assumptions:
         e = []
         for f in fields(self):
             v = getattr(self, f.name)
-            if f.name in PLAN_FIELDS:
+            if f.name in SCHEDULE_FIELDS:
                 if v is not None and (not isinstance(v, tuple) or not 1 <= len(v) <= 15 or any(
                         isinstance(x, bool) or not isinstance(x, (int, float)) for x in v)):
                     e.append(f"{f.name} must be a list of 1-15 numbers (one per year), got {v!r}")
@@ -129,6 +142,11 @@ class Assumptions:
             for i, x in enumerate(getattr(self, f"{driver}_by_year") or ()):
                 if not lo < x < hi and not (driver == "capex_pct_revenue" and x == 0):
                     e.append(f"{driver}_by_year[{i}] = {x}: must be {text} (decimals)")
+        for i, x in enumerate(self.max_net_leverage_by_year or ()):
+            if not 0 < x <= 20:
+                e.append(f"max_net_leverage_by_year[{i}] = {x}: must be between 0 and 20x")
+        if self.max_net_leverage < 0 or self.min_interest_cover < 0:
+            e.append("max_net_leverage and min_interest_cover must be >= 0 (0 = no covenant)")
 
         for name in ("entry_ebitda", "entry_ev_multiple", "revenue_at_entry", "exit_ev_multiple"):
             if getattr(self, name) <= 0:
@@ -172,6 +190,10 @@ class Assumptions:
     @property
     def has_plan(self) -> bool:
         return any(getattr(self, name) for name in PLAN_FIELDS)
+
+    @property
+    def has_covenants(self) -> bool:
+        return bool(self.max_net_leverage or self.max_net_leverage_by_year or self.min_interest_cover)
 
 
 @dataclass
@@ -295,6 +317,27 @@ def run_lbo(a: Assumptions) -> List[YearResult]:
     return results
 
 
+def covenant_tests(a: Assumptions, results: List[YearResult]) -> List[dict]:
+    """Year-end maintenance tests. Headroom = EBITDA cushion before a breach (negative = breach)."""
+    tests = []
+    for r in results:
+        net_debt = r.senior_end_balance + r.sub_end_balance + r.rcf_end_balance - r.cash_end_balance
+        net_leverage = net_debt / r.ebitda if r.ebitda > 0 else float("inf")
+        lev_limit = a.plan_value("max_net_leverage", r.year)
+        lev_headroom = (1 - net_leverage / lev_limit) if lev_limit > 0 else None
+        cover = r.ebitda / r.interest_expense if r.interest_expense > 0 else None
+        cover_headroom = (1 - a.min_interest_cover / cover) if (a.min_interest_cover > 0 and cover) else None
+        if a.min_interest_cover > 0 and cover is not None and cover <= 0:
+            cover_headroom = -1.0
+        tests.append({
+            "year": r.year, "net_leverage": net_leverage, "leverage_limit": lev_limit or None,
+            "leverage_headroom": lev_headroom, "interest_cover": cover,
+            "cover_limit": a.min_interest_cover or None, "cover_headroom": cover_headroom,
+            "breach": any(h is not None and h < 0 for h in (lev_headroom, cover_headroom)),
+        })
+    return tests
+
+
 def calculate_returns(a: Assumptions, results: List[YearResult], su: dict) -> dict:
     last = results[-1]
     exit_ebitda = last.ebitda
@@ -322,6 +365,21 @@ def calculate_returns(a: Assumptions, results: List[YearResult], su: dict) -> di
     if exit_equity_value <= 0:
         warnings.append("Exit equity value <= 0: sponsor loses the entire investment")
 
+    covenants = None
+    if a.has_covenants:
+        tests = covenant_tests(a, results)
+        headrooms = [h for t in tests for h in (t["leverage_headroom"], t["cover_headroom"]) if h is not None]
+        first = next((t for t in tests if t["breach"]), None)
+        covenants = {"tests": tests, "first_breach_year": first["year"] if first else None,
+                     "min_headroom": min(headrooms) if headrooms else None}
+        if first:
+            parts = []
+            if first["leverage_headroom"] is not None and first["leverage_headroom"] < 0:
+                parts.append(f"net leverage {first['net_leverage']:.2f}x vs max {first['leverage_limit']:.2f}x")
+            if first["cover_headroom"] is not None and first["cover_headroom"] < 0:
+                parts.append(f"interest cover {first['interest_cover']:.2f}x vs min {first['cover_limit']:.2f}x")
+            warnings.append(f"Covenant breach in year {first['year']}: " + " and ".join(parts))
+
     return {
         "exit_ev": exit_ev,
         "exit_net_debt": exit_net_debt,
@@ -331,6 +389,7 @@ def calculate_returns(a: Assumptions, results: List[YearResult], su: dict) -> di
         "irr": irr,
         "peak_rcf_draw": peak_rcf,
         "min_interest_coverage": min_coverage,
+        "covenants": covenants,
         "warnings": warnings,
     }
 

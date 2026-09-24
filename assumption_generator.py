@@ -25,12 +25,15 @@ import math
 import os
 import sys
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Literal, Optional
+from typing import Tuple, Callable, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from lbo_engine import PLAN_DRIVERS, PLAN_FIELDS, Assumptions, run_model
-from sector_benchmarks import (
+import dataclasses as _dc
+
+from lbo_engine import (COVENANT_FIELDS, PLAN_DRIVERS, PLAN_FIELDS, SCHEDULE_FIELDS, Assumptions,
+                        covenant_tests, run_lbo, run_model)
+from sector_benchmarks import (COVENANT_HEADROOM, 
     GLOBAL_RANGES, MIN_CASH_PCT_REVENUE, MIN_EQUITY_PCT_OF_USES, MIN_SUB_SPREAD_OVER_SENIOR,
     RCF_COMMITMENT_X_EBITDA, SECTORS, SENIOR_SHARE_OF_TOTAL_LEVERAGE, benchmark_table_for_prompt,
 )
@@ -40,7 +43,7 @@ DEFAULT_MODEL = os.environ.get("LBO_AGENT_MODEL", "claude-opus-5")
 FALLBACK_MODELS = {"claude-opus-5", "claude-fable-5-1"}
 
 NUMERIC_FIELDS = [f.name for f in dataclasses.fields(Assumptions)
-                  if f.name != "company_name" and f.name not in PLAN_FIELDS]
+                  if f.name != "company_name" and f.name not in SCHEDULE_FIELDS + COVENANT_FIELDS]
 # Fields expressed as decimals; a value above 1 almost certainly means "4" was meant as 4%.
 PCT_FIELDS = {"revenue_growth", "ebitda_margin", "capex_pct_revenue", "da_pct_revenue",
               "nwc_pct_of_rev_growth", "senior_rate", "senior_mandatory_amort_pct", "sub_rate",
@@ -70,6 +73,14 @@ class OperatingPlan(BaseModel):
         description="Capex as a share of revenue per projection year, decimals. Empty = flat at capex_pct_revenue.")
     source: Literal["provided", "estimated"]
     rationale: str = Field(description="Why the plan is flat, or what drives each profile.")
+
+
+class CovenantTerms(BaseModel):
+    max_net_leverage: float = Field(description="Maximum net debt / EBITDA if the description states one, "
+                                                "else 0 (set from the base case with market headroom).")
+    min_interest_cover: float = Field(description="Minimum EBITDA / interest if stated, else 0.")
+    source: Literal["provided", "estimated"]
+    rationale: str
 
 
 class ProposedAssumptions(BaseModel):
@@ -106,6 +117,7 @@ class ProposedAssumptions(BaseModel):
         description="Years over which financing fees and OID are amortised (the debt tenor), whole years.")
     hold_period_years: Estimate = Field(description="Whole years.")
     exit_ev_multiple: Estimate = Field(description="Exit EV / EBITDA, x. Base case: <= entry multiple.")
+    covenants: CovenantTerms = Field(description="Maintenance covenants; 0 = not stated in the description.")
     operating_plan: OperatingPlan = Field(
         description="Year-by-year profile of growth, margin and capex; all lists empty = flat plan.")
     key_risks: List[str] = Field(description="3-5 deal-specific risks to underwrite.")
@@ -135,6 +147,8 @@ rationale. Stay within the sector ranges below; no hockey sticks in a base case.
 - Transaction costs, unless the description gives them: M&A fees around 1.5-2.5% of EV (higher \
 for small deals), financing fees around 2-3% of the debt, Term Loan OID 0-1%, amortised over a 6-7 \
 year debt tenor.
+- covenants: only if the description states covenant levels; otherwise 0 (they are then set from the \
+base case with market headroom).
 - Tax rate: use the statutory corporate rate of the company's main country (e.g. Italy IRES + IRAP \
 ~28%, Germany ~30%, France 25%, UK 25%, Spain 25%).
 - Financing must be consistent with today's market for a company of this size and sector: \
@@ -419,6 +433,46 @@ class _Guardrails:
         )
 
 
+def _round_to(x: float, step: float, up: bool) -> float:
+    return (math.ceil if up else math.floor)(x / step - 1e-9 if up else x / step + 1e-9) * step
+
+
+def derive_covenants(a: Assumptions, headroom: float = COVENANT_HEADROOM) -> Tuple[Tuple[float, ...], float]:
+    """Covenant levels a lender would set on this base case: each year's net leverage ceiling
+    and a flat interest-cover floor with `headroom` EBITDA cushion, on quarter-turn steps,
+    leverage stepping down (never up) as the base case deletes."""
+    tests = covenant_tests(a, run_lbo(_dc.replace(a, max_net_leverage=0.0, max_net_leverage_by_year=None,
+                                                  min_interest_cover=0.0)))
+    steps, prev = [], None
+    for t in tests:
+        level = max(_round_to(t["net_leverage"] / (1 - headroom), 0.25, up=True), 1.0)
+        level = min(level, prev) if prev is not None else level
+        steps.append(level)
+        prev = level
+    covers = [t["interest_cover"] for t in tests if t["interest_cover"]]
+    cover = max(_round_to(min(covers) * (1 - headroom), 0.25, up=False), 1.0) if covers else 0.0
+    return tuple(steps), cover
+
+
+def _set_covenants(res: GenerationResult, terms: CovenantTerms) -> GenerationResult:
+    a = res.assumptions
+    if terms.source == "provided" and (terms.max_net_leverage or terms.min_interest_cover):
+        a = _dc.replace(a, max_net_leverage=terms.max_net_leverage, min_interest_cover=terms.min_interest_cover)
+        for name in COVENANT_FIELDS:
+            value = getattr(a, name)
+            res.trace[name] = FieldTrace(value, "provided", terms.rationale, value)
+    else:
+        steps, cover = derive_covenants(a)
+        a = _dc.replace(a, max_net_leverage_by_year=steps, min_interest_cover=cover)
+        why = (f"Not stated: set as a lender would, with {COVENANT_HEADROOM:.0%} EBITDA headroom to the base "
+               f"case, on quarter-turn steps")
+        res.trace["max_net_leverage_by_year"] = FieldTrace(list(steps), "derived", why + ", stepping down "
+                                                           "with the base-case deleveraging", 0.0)
+        res.trace["min_interest_cover"] = FieldTrace(cover, "derived", why, 0.0)
+    res.assumptions = a
+    return res
+
+
 def apply_guardrails(proposal: ProposedAssumptions) -> GenerationResult:
     g = _Guardrails(proposal)
     g.fix_units()
@@ -426,7 +480,7 @@ def apply_guardrails(proposal: ProposedAssumptions) -> GenerationResult:
     g.sector_and_market_ranges()
     g.plan_ranges()
     g.cross_field_rules()
-    return g.result()
+    return _set_covenants(g.result(), proposal.covenants)
 
 
 def generate_assumptions(

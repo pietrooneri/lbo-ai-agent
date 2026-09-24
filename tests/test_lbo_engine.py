@@ -29,6 +29,11 @@ SCENARIOS = {
     # shorter than the hold (last value repeats), margin list longer (extra years ignored)
     "year_by_year": Assumptions(revenue_growth_by_year=[0.02, 0.05, 0.08], ebitda_margin_by_year=[0.18, 0.19, 0.20, 0.21, 0.22, 0.22],
                                 capex_pct_revenue_by_year=[0.06, 0.05, 0.03]),
+    # Covenants: stressed case that breaches (step-down leverage + cover), and a comfortable base
+    "covenant_breach": Assumptions(ebitda_margin=0.10, entry_ebitda=75, revenue_growth=0.0, total_leverage_x=6.5,
+                                   senior_leverage_x=5.0, max_net_leverage_by_year=[7.0, 6.5, 6.0],
+                                   min_interest_cover=2.25),
+    "covenant_ok": Assumptions(max_net_leverage_by_year=[6.5, 6.0, 5.5, 5.0], min_interest_cover=2.0),
     "fees_oid": Assumptions(transaction_fees_pct_ev=0.02, financing_fees_pct_debt=0.025, senior_oid_pct=0.01,
                             fee_amortization_years=4),
 }
@@ -203,3 +208,27 @@ def test_flat_plan_equals_scalar_inputs():
 def test_invalid_plan_inputs(overrides, message):
     with pytest.raises(ValueError, match=message):
         dataclasses.replace(Assumptions(), **overrides)
+
+
+def test_covenant_tests_and_headroom():
+    out = run_model(SCENARIOS["covenant_ok"])
+    cov = out["returns"]["covenants"]
+    y1, r1 = cov["tests"][0], out["years"][0]
+    net_debt = r1.senior_end_balance + r1.sub_end_balance + r1.rcf_end_balance - r1.cash_end_balance
+    assert y1["net_leverage"] == pytest.approx(net_debt / r1.ebitda)
+    assert y1["leverage_headroom"] == pytest.approx(1 - y1["net_leverage"] / 6.5)
+    assert y1["cover_headroom"] == pytest.approx(1 - 2.0 / (r1.ebitda / r1.interest_expense))
+    assert [t["leverage_limit"] for t in cov["tests"]] == [6.5, 6.0, 5.5, 5.0, 5.0]   # step-downs, last repeats
+    assert cov["first_breach_year"] is None and cov["min_headroom"] > 0
+    assert not any("Covenant" in w for w in out["returns"]["warnings"])
+
+
+def test_covenant_breach_is_flagged():
+    ret = run_model(SCENARIOS["covenant_breach"])["returns"]
+    cov = ret["covenants"]
+    assert cov["first_breach_year"] is not None and cov["min_headroom"] < 0
+    assert any(w.startswith(f"Covenant breach in year {cov['first_breach_year']}") for w in ret["warnings"])
+
+
+def test_no_covenants_by_default():
+    assert run_model(Assumptions())["returns"]["covenants"] is None

@@ -23,11 +23,13 @@ FLAT_PLAN = {"revenue_growth_by_year": [], "ebitda_margin_by_year": [], "capex_p
              "source": "estimated", "rationale": "no reason for a profile: flat"}
 
 
-def proposal(provided=(), sector="industrials", plan=None, **overrides) -> ProposedAssumptions:
+def proposal(provided=(), sector="industrials", plan=None, covenants=None, **overrides) -> ProposedAssumptions:
     vals = {**BASE, **overrides}
     return ProposedAssumptions(
         company_name="Project Test", sector=sector, sector_rationale="test", currency="EUR",
         key_risks=["cyclicality"], operating_plan={**FLAT_PLAN, **(plan or {})},
+        covenants=covenants or {"max_net_leverage": 0, "min_interest_cover": 0, "source": "estimated",
+                                "rationale": "not stated"},
         **{k: {"value": v, "source": "provided" if k in provided else "estimated", "rationale": "r"}
            for k, v in vals.items()},
     )
@@ -211,3 +213,22 @@ def test_provided_plan_is_flagged_not_changed():
 def test_flat_plan_changes_nothing():
     res = apply_guardrails(proposal())
     assert not res.assumptions.has_plan and "revenue_growth_by_year" not in res.trace
+
+
+def test_covenants_derived_with_market_headroom():
+    res = apply_guardrails(proposal())
+    a = res.assumptions
+    steps = a.max_net_leverage_by_year
+    assert steps == tuple(sorted(steps, reverse=True))                     # step-downs, never up
+    assert all(round(x * 4) == x * 4 for x in steps) and a.min_interest_cover % 0.25 == 0
+    cov = run_model(a)["returns"]["covenants"]
+    assert cov["first_breach_year"] is None
+    assert 0.25 <= cov["min_headroom"] <= 0.36                               # ~30% cushion after rounding
+    assert res.trace["max_net_leverage_by_year"].source == "derived"
+
+
+def test_stated_covenants_are_kept():
+    res = apply_guardrails(proposal(covenants={"max_net_leverage": 5.0, "min_interest_cover": 2.5,
+                                               "source": "provided", "rationale": "term sheet"}))
+    a = res.assumptions
+    assert (a.max_net_leverage, a.max_net_leverage_by_year, a.min_interest_cover) == (5.0, None, 2.5)

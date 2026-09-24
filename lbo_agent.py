@@ -44,7 +44,10 @@ from assumption_generator import (
     generate_assumptions,
 )
 from excel_export import export_to_excel
-from lbo_engine import PLAN_DRIVERS, PLAN_FIELDS, Assumptions, run_model
+from lbo_engine import COVENANT_FIELDS, PLAN_DRIVERS, PLAN_FIELDS, SCHEDULE_FIELDS, Assumptions, run_model
+
+OVERRIDABLE = NUMERIC_FIELDS + list(COVENANT_FIELDS)         # flat values accepted in `overrides`
+SCHEDULE_DRIVERS = PLAN_DRIVERS + ("max_net_leverage",)       # per-year lists accepted in `plan`
 from sector_benchmarks import GLOBAL_RANGES, SECTORS
 
 MAX_TOOL_ROUNDS = 25
@@ -214,14 +217,14 @@ class DealSession:
         (they are multiples of LTM EBITDA, which does not move). reprice_entry=True is the
         pre-signing view: the new margin is already true today, so LTM EBITDA -- and with it
         price and debt -- follow it."""
-        unknown = sorted(set(overrides) - set(NUMERIC_FIELDS))
+        unknown = sorted(set(overrides) - set(OVERRIDABLE))
         if unknown:
-            raise ToolError(f"Unknown assumption(s) {unknown}. Valid names: {NUMERIC_FIELDS}. "
+            raise ToolError(f"Unknown assumption(s) {unknown}. Valid names: {OVERRIDABLE}. "
                             f"Year-by-year values go in `plan`, not `overrides`.")
         plan = plan or {}
-        bad_plan = sorted(set(plan) - set(PLAN_DRIVERS))
+        bad_plan = sorted(set(plan) - set(SCHEDULE_DRIVERS))
         if bad_plan:
-            raise ToolError(f"Unknown plan driver(s) {bad_plan}. Valid: {list(PLAN_DRIVERS)}")
+            raise ToolError(f"Unknown plan driver(s) {bad_plan}. Valid: {list(SCHEDULE_DRIVERS)}")
         if reprice_entry and "entry_ebitda" in overrides:
             raise ToolError("Pass either entry_ebitda or reprice_entry=true, not both: "
                             "reprice_entry derives entry_ebitda from revenue x the new margin.")
@@ -231,7 +234,7 @@ class DealSession:
         if "total_leverage_x" in overrides and "senior_leverage_x" not in overrides and base.total_leverage_x > 0:
             vals["senior_leverage_x"] = overrides["total_leverage_x"] * base.senior_leverage_x / base.total_leverage_x
         vals.update(overrides)
-        for driver in PLAN_DRIVERS:
+        for driver in SCHEDULE_DRIVERS:
             if driver in plan:                              # a new year-by-year profile
                 vals[f"{driver}_by_year"] = list(plan[driver]) or None
             elif driver in overrides:                       # a flat value replaces any profile
@@ -303,6 +306,14 @@ class DealSession:
             "min_interest_coverage": (round(r["min_interest_coverage"], 2)
                                       if r["min_interest_coverage"] != float("inf") else None),
             "engine_warnings": r["warnings"],
+            **({"covenants": {
+                "max_net_leverage_by_year": [t["leverage_limit"] for t in r["covenants"]["tests"]],
+                "net_leverage_by_year": [round(t["net_leverage"], 2) for t in r["covenants"]["tests"]],
+                "min_interest_cover": a.min_interest_cover or None,
+                "first_breach_year": r["covenants"]["first_breach_year"],
+                "lowest_headroom": (round(r["covenants"]["min_headroom"], 3)
+                                    if r["covenants"]["min_headroom"] is not None else None),
+            }} if r["covenants"] else {}),
         }
 
     # -- tools ------------------------------------------------------------------
@@ -328,7 +339,8 @@ class DealSession:
             "sector": res.sector,
             "sector_rationale": res.sector_rationale,
             "currency": res.currency,
-            "assumptions": {n: {"value": round(t.value, 4), "source": t.source, "rationale": t.rationale}
+            "assumptions": {n: {"value": ([round(x, 4) for x in t.value] if isinstance(t.value, (list, tuple))
+                                          else round(t.value, 4)), "source": t.source, "rationale": t.rationale}
                             for n, t in res.trace.items()},
             "guardrail_adjustments": res.adjustments,
             "guardrail_warnings": res.warnings,
@@ -347,7 +359,7 @@ class DealSession:
         a = self.apply_overrides(parent.assumptions, overrides, reprice_entry, plan)
         # Record what actually moved (incl. knock-on changes such as the senior tranche),
         # not just what was asked for.
-        changed = {k: getattr(a, k) for k in NUMERIC_FIELDS + list(PLAN_FIELDS)
+        changed = {k: getattr(a, k) for k in OVERRIDABLE + list(SCHEDULE_FIELDS)
                    if getattr(a, k) != getattr(parent.assumptions, k)}
         merged = {**parent.overrides, **changed}
         self.scenarios[name] = Scenario(name, a, based_on, rationale, merged)
@@ -498,7 +510,8 @@ def make_tools(session: DealSession):
                 nwc_pct_of_rev_growth, total_leverage_x, senior_leverage_x, senior_rate,
                 senior_mandatory_amort_pct, sub_rate, cash_sweep_pct, rcf_commitment, rcf_rate,
                 tax_rate, min_cash, hold_period_years, exit_ev_multiple, transaction_fees_pct_ev,
-                financing_fees_pct_debt, senior_oid_pct, fee_amortization_years, entry_ebitda (LTM EBITDA,
+                financing_fees_pct_debt, senior_oid_pct, fee_amortization_years, max_net_leverage and
+                min_interest_cover (covenants, 0 = none), entry_ebitda (LTM EBITDA,
                 e.g. a quality-of-earnings adjustment). ebitda_margin is the projected margin.
                 Changing total_leverage_x alone keeps the base senior/sub mix.
             rationale: One sentence on why this scenario matters; it is written into the Excel audit trail.
@@ -507,7 +520,8 @@ def make_tools(session: DealSession):
                 (LTM) margin, so price and debt are re-sized on it. Leave false for post-closing
                 downsides and upsides.
             plan: Year-by-year profile, driver -> list of values for years 1, 2, 3... (later years repeat
-                the last value). Drivers: revenue_growth, ebitda_margin, capex_pct_revenue. Use it when
+                the last value). Drivers: revenue_growth, ebitda_margin, capex_pct_revenue, and
+                max_net_leverage for covenant step-downs. Use it when
                 the change builds up over time (a margin that erodes gradually, a recovery, expansion
                 capex); a flat value in `overrides` replaces any profile of that driver.
         """
@@ -562,9 +576,14 @@ Ground rules:
 thresholds yourself. If you need a number you do not have, call a tool.
 - The same goes for claims about what would or would not work ("more leverage cannot close the \
 gap", "the price would need to fall to..."): test them with solve_for_target or run_scenario first.
-- Stay within what the model covers. It has no covenants, no refinancing, no fees, no dividends \
-and no management plan: do not assert covenant breaches or their timing; describe the metric \
-instead (e.g. net debt / EBITDA by year).
+- Stay within what the model covers. It models transaction fees and OID, a year-by-year operating \
+plan and maintenance covenants (max net leverage with step-downs, min interest cover; the tools \
+report the first breach year and the lowest EBITDA headroom). It has no refinancing, no waiver or \
+default mechanics, no dividends or recaps and no management equity: do not assert what happens \
+after a breach beyond what the tools report. When covenants were set from the base case (no user \
+terms), say they assume ~30% headroom, as lenders typically set them.
+- In a downside, always report whether and when the covenants would be breached and the lowest \
+headroom: that, more than the IRR, tells whether the structure survives.
 - Start with generate_base_case, passing the user's description verbatim. If it returns an \
 existing base case (e.g. loaded from a saved deal file), work from it and its existing scenarios \
 as they are: they are the agreed starting point.

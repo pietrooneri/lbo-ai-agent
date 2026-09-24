@@ -133,7 +133,7 @@ def test_cli_load_reuses_base_case_and_saves_back(deal, tmp_path, monkeypatch, c
     first_tool_result = json.loads(script.requests[1]["messages"][-1]["content"][0]["content"])
     assert "not re-estimated" in first_tool_result["note"]
     saved = json.loads(open(path).read())
-    assert saved["base"] == deal.generation.to_dict()
+    assert saved["base"] == json.loads(json.dumps(deal.generation.to_dict()))   # tuples become lists in JSON
     assert [s["name"] for s in saved["scenarios"]] == ["downside", "downside_low_exit", "max_price_20", "lev4"]
 
 

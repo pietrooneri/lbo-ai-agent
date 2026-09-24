@@ -149,7 +149,8 @@ FIELD_LABELS = {
            "tax_rate": "tasse", "min_cash": "cassa minima", "hold_period_years": "anni di detenzione",
            "exit_ev_multiple": "multiplo d'uscita", "transaction_fees_pct_ev": "fee M&A",
            "financing_fees_pct_debt": "fee di finanziamento", "senior_oid_pct": "OID sul Term Loan",
-           "fee_amortization_years": "anni di ammortamento fee"},
+           "fee_amortization_years": "anni di ammortamento fee", "max_net_leverage": "covenant leva massima",
+           "min_interest_cover": "covenant copertura minima"},
     "en": {"revenue_at_entry": "revenue", "entry_ebitda": "entry EBITDA", "ebitda_margin": "margin",
            "entry_ev_multiple": "entry multiple", "revenue_growth": "annual growth", "capex_pct_revenue": "capex",
            "da_pct_revenue": "D&A", "nwc_pct_of_rev_growth": "working capital", "total_leverage_x": "total debt",
@@ -158,7 +159,8 @@ FIELD_LABELS = {
            "cash_sweep_pct": "cash sweep", "rcf_commitment": "RCF", "rcf_rate": "RCF rate", "tax_rate": "tax",
            "min_cash": "minimum cash", "hold_period_years": "holding years", "exit_ev_multiple": "exit multiple",
            "transaction_fees_pct_ev": "M&A fees", "financing_fees_pct_debt": "financing fees",
-           "senior_oid_pct": "Term Loan OID", "fee_amortization_years": "fee amortisation years"},
+           "senior_oid_pct": "Term Loan OID", "fee_amortization_years": "fee amortisation years",
+           "max_net_leverage": "max leverage covenant", "min_interest_cover": "min cover covenant"},
 }
 
 TEXT: Dict[str, Dict[str, str]] = {
@@ -226,7 +228,10 @@ TEXT: Dict[str, Dict[str, str]] = {
         "k_moic_h": "Quante volte il fondo moltiplica i soldi investiti",
         "k_irr_h": "Rendimento annuo; per un fondo di private equity di solito si punta ad almeno 20%",
         "c_scenario": "Scenario", "c_changes": "Cosa cambia rispetto al caso base", "c_ev": "Prezzo",
-        "c_lev": "Debito (x EBITDA)", "c_flags": "Avvisi",
+        "c_lev": "Debito (x EBITDA)", "c_flags": "Avvisi", "c_cov": "Covenant",
+        "cov_ok": "rispettati (headroom minimo {h})", "cov_breach": "violati nell'anno {y}",
+        "w_covenant": "Covenant violato nell'anno {y}: {d}",
+        "w_cov_lev": "leva netta {a} contro un massimo di {b}", "w_cov_cover": "copertura interessi {a} contro un minimo di {b}",
         "ch_irr": "Rendimento annuo (IRR) per scenario", "ch_target": "obiettivo tipico 20%",
         "ch_debt": "Quanto pesa il debito: debito netto / EBITDA",
         "ch_debt_sub": "Più in basso = più sicuro. Scenari con lo stesso debito si sovrappongono.",
@@ -307,7 +312,10 @@ TEXT: Dict[str, Dict[str, str]] = {
         "k_moic_h": "How many times the fund multiplies the money invested",
         "k_irr_h": "Annual return; private equity funds usually aim for at least 20%",
         "c_scenario": "Scenario", "c_changes": "What changes vs the base case", "c_ev": "Price",
-        "c_lev": "Debt (x EBITDA)", "c_flags": "Warnings",
+        "c_lev": "Debt (x EBITDA)", "c_flags": "Warnings", "c_cov": "Covenants",
+        "cov_ok": "met (lowest headroom {h})", "cov_breach": "breached in year {y}",
+        "w_covenant": "Covenant breached in year {y}: {d}",
+        "w_cov_lev": "net leverage {a} vs a maximum of {b}", "w_cov_cover": "interest cover {a} vs a minimum of {b}",
         "ch_irr": "Annual return (IRR) by scenario", "ch_target": "typical target 20%",
         "ch_debt": "How heavy the debt is: net debt / EBITDA",
         "ch_debt_sub": "Lower = safer. Scenarios with the same debt overlap.",
@@ -413,6 +421,10 @@ def translate_warning(text: str, lang: str = "it") -> str:
         (r"^Minimum EBITDA / interest coverage ([\d.]+)x",
          lambda m: t(lang, "w_cov", a=num(float(m[1]), 2, lang))),
         (r"^Exit equity value <= 0", lambda m: t(lang, "w_equity")),
+        (r"^Covenant breach in year (\d+): (.+)$", lambda m: t(lang, "w_covenant", y=m[1], d=" · ".join(
+            t(lang, "w_cov_lev" if part.startswith("net leverage") else "w_cov_cover",
+              a=mult(float(x[0]), lang), b=mult(float(x[1]), lang))
+            for part in m[2].split(" and ") for x in [re.findall(r"([\d.]+)x", part)]))),
         (r"^(\w+) = ([\d.]+)(%|x)? \(provided\) is outside \w+ (?:margin )?range (.+?); kept as given",
          lambda m: t(lang, "w_provided", f=FIELD_LABELS[lang].get(m[1], m[1]),
                      v=num(float(m[2]), 2, lang) + (m[3] or ""),
@@ -471,10 +483,20 @@ def table_rows(session: DealSession, lang: str = "it") -> List[dict]:
             "id": s["scenario"], "scenario": pretty_scenario(s["scenario"], lang), "changes": changes,
             "moic": mult(s["moic"], lang), "irr": pct(s["irr"], lang), "ev": money(s["entry_ev"], lang),
             "leverage": mult(s["entry_total_leverage_x"], lang),
-            "flags": "; ".join(translate_warning(w, lang) for w in s["engine_warnings"]) or "—",
+            "flags": "; ".join(translate_warning(w, lang) for w in s["engine_warnings"]
+                               if not w.startswith("Covenant breach")) or "—",
+            "covenant": covenant_text(s.get("covenants"), lang),
             "irr_value": s["irr"],
         })
     return rows
+
+
+def covenant_text(cov: Optional[dict], lang: str = "it") -> str:
+    if not cov:
+        return "—"
+    if cov["first_breach_year"]:
+        return t(lang, "cov_breach", y=cov["first_breach_year"])
+    return t(lang, "cov_ok", h=pct(cov["lowest_headroom"], lang, 0)) if cov["lowest_headroom"] is not None else "—"
 
 
 def table_columns(lang: str = "it") -> List[dict]:
@@ -485,6 +507,7 @@ def table_columns(lang: str = "it") -> List[dict]:
         {"name": "leverage", "label": t(lang, "c_lev"), "field": "leverage"},
         {"name": "moic", "label": "MOIC", "field": "moic"},
         {"name": "irr", "label": "IRR", "field": "irr"},
+        {"name": "covenant", "label": t(lang, "c_cov"), "field": "covenant", "align": "left"},
         {"name": "flags", "label": t(lang, "c_flags"), "field": "flags", "align": "left"},
     ]
 
@@ -680,6 +703,11 @@ GLOSSARY: Dict[str, Dict[str, str]] = {
                                      "campanello d'allarme.",
         "Guardrail": "Controlli automatici che riportano le stime dell'AI dentro i valori tipici del settore e "
                      "segnalano i dati fuori norma.",
+        "Covenant": "Soglie che le banche impongono ogni anno: per esempio un debito non superiore a 5 volte "
+                    "l'EBITDA e un EBITDA almeno 2 volte gli interessi. Se si superano, la banca può chiedere "
+                    "di rinegoziare o rimborsare. L'headroom dice di quanto può scendere l'EBITDA prima di violarle.",
+        "Fee e OID": "Costi pagati al closing: consulenti (fee M&A), banche (fee di finanziamento) e lo sconto "
+                     "con cui viene erogato il prestito (OID). Aumentano i soldi che il fondo deve mettere.",
     },
     "en": {
         "LBO (leveraged buyout)": "Buying a company mostly with borrowed money. The debt is then repaid with the "
@@ -701,5 +729,10 @@ GLOSSARY: Dict[str, Dict[str, str]] = {
         "Interest coverage": "How many times EBITDA covers the interest due. Below 2 times is a warning sign.",
         "Guardrail": "Automatic checks that bring the AI's estimates back within the sector's usual values and "
                      "flag unusual figures.",
+        "Covenant": "Limits the banks test every year: for example debt no higher than 5 times EBITDA and EBITDA "
+                    "at least 2 times interest. If breached, lenders can demand renegotiation or repayment. "
+                    "Headroom says how far EBITDA can fall before a breach.",
+        "Fees and OID": "Costs paid at closing: advisers (M&A fees), banks (financing fees) and the discount at "
+                        "which the loan is funded (OID). They increase the money the fund must put in.",
     },
 }

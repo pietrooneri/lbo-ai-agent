@@ -137,6 +137,8 @@ MIN_SUB_SPREAD_OVER_SENIOR = 0.015                    # sub debt must price >= s
 MIN_EQUITY_PCT_OF_USES = 0.30                         # typical floor on sponsor equity cheque
 RCF_COMMITMENT_X_EBITDA: Range = (0.25, 1.5)
 MIN_CASH_PCT_REVENUE: Range = (0.005, 0.05)
+# Maintenance covenants are usually set with ~25-35% EBITDA headroom to the sponsor's base case.
+COVENANT_HEADROOM = 0.30
 
 
 def benchmark_table_for_prompt() -> str:

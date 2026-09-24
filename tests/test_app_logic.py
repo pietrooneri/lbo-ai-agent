@@ -172,3 +172,18 @@ def test_profiles_are_shown_as_a_sequence():
     assert L.progress_message("run_scenario", {"name": "downside", "overrides": {},
                                                "plan": {"ebitda_margin": [0.14, 0.12]}}, "en") == \
         "Running the «downside» scenario (margin by year 14.0% → 12.0%)"
+
+
+@pytest.mark.parametrize("lang, expected", [
+    ("it", "Covenant violato nell'anno 3: leva netta 6,10x contro un massimo di 5,75x · copertura interessi 1,90x contro un minimo di 2,00x"),
+    ("en", "Covenant breached in year 3: net leverage 6.10x vs a maximum of 5.75x · interest cover 1.90x vs a minimum of 2.00x"),
+])
+def test_covenant_warning_in_plain_words(lang, expected):
+    w = "Covenant breach in year 3: net leverage 6.10x vs max 5.75x and interest cover 1.90x vs min 2.00x"
+    assert L.translate_warning(w, lang) == expected
+
+
+def test_covenant_column():
+    assert L.covenant_text(None) == "—"
+    assert L.covenant_text({"first_breach_year": 2, "lowest_headroom": -0.1}) == "violati nell'anno 2"
+    assert L.covenant_text({"first_breach_year": None, "lowest_headroom": 0.284}, "en") == "met (lowest headroom 28%)"

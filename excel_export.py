@@ -114,6 +114,8 @@ ASSUMPTION_LAYOUT = [
     ("financing_fees_pct_debt", "Financing fees (arrangement, underwriting)", "% of funded debt", FMT_PCT, False),
     ("senior_oid_pct", "OID on Term Loan (funded below par, repaid at par)", "% of face value", FMT_PCT, False),
     ("fee_amortization_years", "Amortisation of financing fees + OID (non-cash)", "years", FMT_INT, False),
+    ("Covenants, tested at each year-end (0 = none; max net leverage by year on the Plan sheet)", None, None, None, None),
+    ("min_interest_cover", "Minimum EBITDA / cash interest", "x", FMT_X, False),
     ("Exit", None, None, None, None),
     ("hold_period_years", "Holding period", "years", FMT_INT, True),
     ("exit_ev_multiple", "Exit EV / EBITDA", "x", FMT_X, True),
@@ -219,6 +221,16 @@ def _write_plan(ws, a: Assumptions, audit: Optional[dict], n_years: int) -> Dict
         for year, col in enumerate(year_cols, start=1):
             _put(ws, f"{col}{r}", a.plan_value(driver, year), fmt=FMT_PCT,
                  fill=YELLOW_FILL if driver != "capex_pct_revenue" else None)
+
+    r = PLAN_FIRST_ROW + len(PLAN_DRIVERS)                 # covenant step-downs share the year columns
+    rows["plan_row:max_net_leverage"] = r
+    _put(ws, f"A{r}", "Covenant: max net debt / EBITDA")
+    _put(ws, f"B{r}", "x, 0 = no covenant", color=GREY)
+    t = trace.get("max_net_leverage_by_year") or trace.get("max_net_leverage")
+    _put(ws, f"C{r}", f"{t['source']}: {t['rationale']}" if t else "input", color=GREY)
+    ws[f"C{r}"].alignment = Alignment(wrap_text=True, vertical="top")
+    for year, col in enumerate(year_cols, start=1):
+        _put(ws, f"{col}{r}", a.plan_value("max_net_leverage", year), fmt=FMT_X)
     ws.freeze_panes = "D5"
     return rows
 
@@ -364,6 +376,26 @@ def _lbo_layout(A: Dict[str, str], n_years: int, last: str) -> List[Line]:
           year=lambda c, p, R: f"={c}{R['total_debt']}/{c}{R['ebitda']}", fmt=FMT_X),
         L("cov", "EBITDA / interest",
           year=lambda c, p, R: f'=IF({c}{R["interest"]}>0,{c}{R["ebitda"]}/{c}{R["interest"]},"n.m.")', fmt=FMT_X),
+        L("net_lev", "Net debt / EBITDA",
+          year=lambda c, p, R: f'=IF({c}{R["ebitda"]}>0,{c}{R["net_debt"]}/{c}{R["ebitda"]},"n.m.")', fmt=FMT_X),
+
+        L(None, "Covenants (maintenance tests at year-end; headroom = EBITDA cushion)", kind="section"),
+        L("cv_lev_limit", "Max net debt / EBITDA",
+          year=lambda c, p, R: f"=Plan!{c}${A['plan_row:max_net_leverage']}", fmt=FMT_X),
+        L("cv_lev_head", "  headroom",
+          year=lambda c, p, R: (f'=IF(AND({c}{R["cv_lev_limit"]}>0,ISNUMBER({c}{R["net_lev"]})),'
+                                f'1-{c}{R["net_lev"]}/{c}{R["cv_lev_limit"]},"n.a.")'), fmt=FMT_PCT),
+        L("cv_cov_limit", "Min EBITDA / interest",
+          year=lambda c, p, R: f"={A['min_interest_cover']}", fmt=FMT_X),
+        L("cv_cov_head", "  headroom",
+          year=lambda c, p, R: (f'=IF(AND({c}{R["cv_cov_limit"]}>0,{c}{R["interest"]}>0),'
+                                f'IF({c}{R["ebitda"]}<=0,-1,1-{c}{R["cv_cov_limit"]}/({c}{R["ebitda"]}/{c}{R["interest"]})),'
+                                f'"n.a.")'), fmt=FMT_PCT),
+        L("cv_test", "Covenant test",
+          year=lambda c, p, R: (f'=IF(COUNT({c}{R["cv_lev_head"]},{c}{R["cv_cov_head"]})=0,"-",'
+                                f'IF(OR(AND(ISNUMBER({c}{R["cv_lev_head"]}),N({c}{R["cv_lev_head"]})<0),'
+                                f'AND(ISNUMBER({c}{R["cv_cov_head"]}),N({c}{R["cv_cov_head"]})<0)),"BREACH","OK"))'),
+          fmt="General", bold=True),
 
         L(None, "Checks and helpers", kind="section"),
         L("chk_cash", "Cash conservation |change in net debt - FCF| (must be 0)",
@@ -372,6 +404,11 @@ def _lbo_layout(A: Dict[str, str], n_years: int, last: str) -> List[Line]:
         L("cov_hold", "EBITDA / interest, holding period only",
           year=lambda c, p, R: (f'=IF(AND({c}{R["in_hold"]}=1,{c}{R["interest"]}>0),'
                                 f'{c}{R["ebitda"]}/{c}{R["interest"]},"")'), fmt=FMT_X, memo=True),
+        L("cv_head_hold", "Lowest covenant headroom, holding period only",
+          year=lambda c, p, R: (f'=IF(AND({c}{R["in_hold"]}=1,COUNT({c}{R["cv_lev_head"]},{c}{R["cv_cov_head"]})>0),'
+                                f'MIN({c}{R["cv_lev_head"]},{c}{R["cv_cov_head"]}),"")'), fmt=FMT_PCT, memo=True),
+        L("cv_test_hold", "Covenant test, holding period only",
+          year=lambda c, p, R: f'=IF({c}{R["in_hold"]}=1,{c}{R["cv_test"]},"")', fmt="General", memo=True),
         L("rcf_hold", "RCF balance, holding period only",
           year=lambda c, p, R: f"={c}{R['rcf_end']}*{c}{R['in_hold']}", memo=True),
         L("eq_cf", "Sponsor equity cash flows", entry=lambda R: f"=-C{R['su_equity']}",
@@ -403,6 +440,13 @@ def _lbo_layout(A: Dict[str, str], n_years: int, last: str) -> List[Line]:
         L("flag_cov", "Coverage flag",
           entry=lambda R: f'=IF(AND(ISNUMBER(C{R["min_cov"]}),C{R["min_cov"]}<2),"Coverage below 2.0x","-")'),
         L("flag_eq", "Equity flag", entry=lambda R: f'=IF(C{R["exit_equity"]}<=0,"Exit equity <= 0","-")'),
+        L("cv_first", "First covenant breach (year)",
+          entry=lambda R: (f'=IFERROR(INDEX({yr(R, "years")},MATCH("BREACH",{yr(R, "cv_test_hold")},0)),'
+                           f'IF(COUNTIF({yr(R, "cv_test_hold")},"OK")>0,"none","n.a."))'), fmt=FMT_INT),
+        L("cv_min_head", "Lowest covenant headroom during hold",
+          entry=lambda R: f'=IF(COUNT({yr(R, "cv_head_hold")})>0,MIN({yr(R, "cv_head_hold")}),"n.a.")', fmt=FMT_PCT),
+        L("flag_cov_breach", "Covenant flag",
+          entry=lambda R: f'=IF(ISNUMBER(C{R["cv_first"]}),"Covenant breach in year "&C{R["cv_first"]},"-")'),
     ]
 
 
@@ -417,7 +461,8 @@ def lbo_rows(a: Assumptions) -> Dict[str, int]:
     """Row number of every keyed line on the LBO sheet (for tests and downstream readers)."""
     n_years = max(MIN_PROJECTION_YEARS, a.hold_period_years)
     last = get_column_letter(ENTRY_COL + n_years)
-    dummy = {f.name: "X" for f in dataclasses.fields(Assumptions)} | {f"plan_row:{d}": 0 for d in PLAN_DRIVERS}
+    dummy = {f.name: "X" for f in dataclasses.fields(Assumptions)} | {
+        f"plan_row:{d}": 0 for d in PLAN_DRIVERS + ("max_net_leverage",)}
     return _assign_rows(_lbo_layout(dummy, n_years, last))
 
 
@@ -497,6 +542,10 @@ def _write_lbo(ws, a: Assumptions, A: Dict[str, str], cur: str, n_years: int) ->
                                                    fill=PatternFill("solid", fgColor=RED)))
     ws.conditional_formatting.add("C3", CellIsRule(operator="equal", formula=['"OK"'],
                                                    font=Font(name=FONT, color=GREEN, bold=True)))
+    ws.conditional_formatting.add(
+        f"D{R['cv_test']}:{last}{R['cv_test']}",
+        CellIsRule(operator="equal", formula=['"BREACH"'], font=Font(name=FONT, color=WHITE, bold=True),
+                   fill=PatternFill("solid", fgColor=RED)))
     # Grey out projection years beyond the holding period.
     ws.conditional_formatting.add(
         f"D{R['years'] + 1}:{last}{R['eq_cf']}",

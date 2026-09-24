@@ -273,3 +273,14 @@ def test_tool_schema_exposes_plan():
     from lbo_agent import make_tools
     schema = next(t for t in make_tools(DealSession()) if t.to_dict()["name"] == "run_scenario").to_dict()
     assert "plan" in schema["input_schema"]["properties"]
+
+
+def test_covenants_in_scenarios(session):
+    base = session._summary("base", session.scenarios["base"].assumptions)
+    assert base["covenants"]["first_breach_year"] is None                       # derived with headroom
+    res = session.run_scenario("tight_bank", {"max_net_leverage": 3.0}, "lender asks for 3.0x")
+    assert res["covenants"]["first_breach_year"] == 1
+    assert res["covenants"]["max_net_leverage_by_year"][0] == 3.0             # flat value replaced the steps
+    assert any(w.startswith("Covenant breach in year 1") for w in res["engine_warnings"])
+    res = session.run_scenario("steps", {}, "custom step-downs", plan={"max_net_leverage": [6.0, 5.5, 5.0]})
+    assert res["covenants"]["max_net_leverage_by_year"][:3] == [6.0, 5.5, 5.0]
