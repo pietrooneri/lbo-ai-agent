@@ -149,3 +149,13 @@ def test_answers_and_costs_survive_a_reload(tmp_path):
     loaded = DealSession.load(s.save(), str(tmp_path), llm=no_llm)
     assert loaded.history[0]["question"] == "Com'è il deal?" and loaded.history[0]["answer"] == "Prima risposta."
     assert loaded.usage_log == s.usage_log and len(loaded.usage_log) == 2
+
+
+def test_projects_saved_before_fees_load_with_zero_fees(tmp_path):
+    """Deal files written before transaction costs existed have no fee fields: they reload
+    unchanged (fees = 0) and can still be exported and extended."""
+    loaded = DealSession.load("examples/valves_deal.json", str(tmp_path), llm=no_llm)
+    a = loaded.scenarios["base"].assumptions
+    assert (a.transaction_fees_pct_ev, a.financing_fees_pct_debt, a.senior_oid_pct) == (0.0, 0.0, 0.0)
+    loaded.run_scenario("with_fees", {"transaction_fees_pct_ev": 0.02}, "add fees")
+    assert loaded.export_excel("with_fees")["path"].endswith(".xlsx")

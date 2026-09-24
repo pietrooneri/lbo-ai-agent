@@ -112,6 +112,11 @@ ASSUMPTION_LAYOUT = [
     ("Tax and cash", None, None, None, None),
     ("tax_rate", "Tax rate (no loss carry-forward)", "%", FMT_PCT, False),
     ("min_cash", "Minimum cash (funded at close, never swept)", "{cur} mm", FMT_MM, False),
+    ("Transaction costs (paid at close)", None, None, None, None),
+    ("transaction_fees_pct_ev", "M&A fees (advisory, legal, due diligence)", "% of EV", FMT_PCT, False),
+    ("financing_fees_pct_debt", "Financing fees (arrangement, underwriting)", "% of funded debt", FMT_PCT, False),
+    ("senior_oid_pct", "OID on Term Loan (funded below par, repaid at par)", "% of face value", FMT_PCT, False),
+    ("fee_amortization_years", "Amortisation of financing fees + OID (non-cash)", "years", FMT_INT, False),
     ("Exit", None, None, None, None),
     ("hold_period_years", "Holding period", "years", FMT_INT, True),
     ("exit_ev_multiple", "Exit EV / EBITDA", "x", FMT_X, True),
@@ -204,7 +209,15 @@ def _lbo_layout(A: Dict[str, str], n_years: int, last: str) -> List[Line]:
           extra={"D": x_ebitda, "E": pct_of_total}),
         L("su_mincash", "Minimum cash funding", entry=f"={A['min_cash']}",
           extra={"D": x_ebitda, "E": pct_of_total}),
-        L("su_uses", "Total uses", entry=lambda R: f"=C{R['su_ev']}+C{R['su_mincash']}", bold=True,
+        L("su_txfees", "M&A fees", entry=lambda R: f"=C{R['su_ev']}*{A['transaction_fees_pct_ev']}",
+          extra={"D": x_ebitda, "E": pct_of_total}),
+        L("su_finfees", "Financing fees",
+          entry=lambda R: f"=C{R['su_ebitda']}*{A['total_leverage_x']}*{A['financing_fees_pct_debt']}",
+          extra={"D": x_ebitda, "E": pct_of_total}),
+        L("su_oid", "OID on Term Loan",
+          entry=lambda R: f"=C{R['su_ebitda']}*{A['senior_leverage_x']}*{A['senior_oid_pct']}",
+          extra={"D": x_ebitda, "E": pct_of_total}),
+        L("su_uses", "Total uses", entry=lambda R: f"=SUM(C{R['su_ev']}:C{R['su_oid']})", bold=True,
           extra={"D": x_ebitda, "E": pct_of_total}),
         L(None, kind="blank"),
         L("su_senior", "Senior Term Loan", entry=lambda R: f"=C{R['su_ebitda']}*{A['senior_leverage_x']}",
@@ -243,17 +256,22 @@ def _lbo_layout(A: Dict[str, str], n_years: int, last: str) -> List[Line]:
         L("int_rcf", "Less: interest on RCF (opening balance)",
           year=lambda c, p, R: f"={p}{R['rcf_end']}*{A['rcf_rate']}"),
         L("interest", "Total interest expense", year=lambda c, p, R: f"=SUM({c}{R['int_senior']}:{c}{R['int_rcf']})"),
-        L("ebt", "EBT", year=lambda c, p, R: f"={c}{R['ebit']}-{c}{R['interest']}", bold=True),
+        L("fee_amort", "Less: amortisation of financing fees + OID (non-cash)",
+          year=lambda c, p, R: (f"=IF({c}{R['years']}<={A['fee_amortization_years']},"
+                                f"($C${R['su_finfees']}+$C${R['su_oid']})/{A['fee_amortization_years']},0)")),
+        L("ebt", "EBT", year=lambda c, p, R: f"={c}{R['ebit']}-{c}{R['interest']}-{c}{R['fee_amort']}", bold=True),
         L("tax", "Less: tax (none on losses)", year=lambda c, p, R: f"=MAX({c}{R['ebt']},0)*{A['tax_rate']}"),
         L("ni", "Net income", year=lambda c, p, R: f"={c}{R['ebt']}-{c}{R['tax']}", bold=True),
 
         L(None, "Free cash flow", kind="section"),
         L("cf_ni", "Net income", year=lambda c, p, R: f"={c}{R['ni']}"),
         L("cf_da", "Plus: D&A", year=lambda c, p, R: f"={c}{R['da']}"),
+        L("cf_amort", "Plus: fee + OID amortisation (non-cash)", year=lambda c, p, R: f"={c}{R['fee_amort']}"),
         L("capex", "Less: capex", year=lambda c, p, R: f"={c}{R['revenue']}*{A['capex_pct_revenue']}"),
         L("nwc", "Less: increase in NWC",
           year=lambda c, p, R: f"=({c}{R['revenue']}-{p}{R['revenue']})*{A['nwc_pct_of_rev_growth']}"),
-        L("fcf", "Free cash flow", year=lambda c, p, R: f"={c}{R['cf_ni']}+{c}{R['cf_da']}-{c}{R['capex']}-{c}{R['nwc']}",
+        L("fcf", "Free cash flow",
+          year=lambda c, p, R: f"={c}{R['cf_ni']}+{c}{R['cf_da']}+{c}{R['cf_amort']}-{c}{R['capex']}-{c}{R['nwc']}",
           bold=True),
 
         L(None, "Cash waterfall", kind="section"),
@@ -482,8 +500,11 @@ CONVENTIONS = [
     "RCF / surplus repays RCF first, then sweeps the Term Loan -> remainder kept as cash.",
     "Subordinated Notes are bullet and non-call: repaid at exit out of the equity value.",
     "Exit: final-year EBITDA x exit multiple, less net debt (Term Loan + Sub Notes + RCF - cash).",
-    "Not modelled: transaction fees / OID, interest income on cash, RCF commitment fee, tax-loss "
-    "carry-forwards, dividends / recaps, management equity.",
+    "Transaction costs: M&A fees, financing fees and Term Loan OID are Uses paid at close (they raise the "
+    "equity cheque); financing fees + OID are amortised straight-line, non-cash and tax-deductible, and "
+    "added back in FCF. Debt is repaid at face value.",
+    "Not modelled: interest income on cash, RCF commitment fee, tax-loss carry-forwards, dividends / "
+    "recaps, management equity.",
     "Only two equity cash flows, so IRR = MOIC ^ (1 / years) - 1; Excel IRR() is shown as a cross-check.",
 ]
 

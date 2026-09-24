@@ -24,6 +24,9 @@ SCENARIOS = {
     "partial_sweep": Assumptions(cash_sweep_pct=0.5, nwc_pct_of_rev_growth=-0.05,
                                  senior_leverage_x=5.5),
     "one_year_hold": Assumptions(hold_period_years=1),
+    # Transaction costs, amortisation period shorter than the hold (charge stops in year 5)
+    "fees_oid": Assumptions(transaction_fees_pct_ev=0.02, financing_fees_pct_debt=0.025, senior_oid_pct=0.01,
+                            fee_amortization_years=4),
 }
 
 
@@ -139,3 +142,34 @@ def test_post_close_margin_change_keeps_entry_terms():
     y1 = run_lbo(downside)[0]
     assert y1.ebitda == pytest.approx(780 * 0.15)
     assert run_model(downside)["returns"]["irr"] < run_model(base)["returns"]["irr"]
+
+
+def test_fees_and_oid_are_uses_and_raise_the_equity_cheque():
+    base, fees = run_model(Assumptions()), run_model(SCENARIOS["fees_oid"])
+    su = fees["sources_uses"]
+    assert su["uses"]["transaction_fees"] == pytest.approx(1200 * 0.02)
+    assert su["uses"]["financing_fees"] == pytest.approx(825 * 0.025)
+    assert su["uses"]["oid_on_term_loan"] == pytest.approx(600 * 0.01)
+    extra = 24 + 20.625 + 6
+    assert su["sources"]["sponsor_equity"] == pytest.approx(380 + extra)
+    assert su["total_debt"] == base["sources_uses"]["total_debt"]          # debt still at face value
+    assert fees["returns"]["irr"] < base["returns"]["irr"]
+
+
+def test_financing_cost_amortisation_is_non_cash_and_tax_deductible():
+    a = SCENARIOS["fees_oid"]
+    years, plain = run_lbo(a), run_lbo(Assumptions())
+    amort = (20.625 + 6) / 4
+    assert [round(y.financing_cost_amortization, 6) for y in years] == [round(amort, 6)] * 4 + [0.0]
+    assert years[0].tax == pytest.approx(plain[0].tax - amort * a.tax_rate)       # tax shield
+    assert years[0].fcf_pre_sweep == pytest.approx(plain[0].fcf_pre_sweep + amort * a.tax_rate)
+
+
+@pytest.mark.parametrize("overrides, message", [
+    ({"transaction_fees_pct_ev": 2.0}, "transaction_fees_pct_ev"),
+    ({"senior_oid_pct": -0.01}, "senior_oid_pct"),
+    ({"fee_amortization_years": 0}, "fee_amortization_years"),
+])
+def test_invalid_fee_inputs(overrides, message):
+    with pytest.raises(ValueError, match=message):
+        dataclasses.replace(Assumptions(), **overrides)

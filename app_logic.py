@@ -118,7 +118,8 @@ def _num(v) -> Optional[float]:
 
 
 PCT_FIELDS = {"ebitda_margin", "revenue_growth", "capex_pct_revenue", "da_pct_revenue", "nwc_pct_of_rev_growth",
-              "senior_rate", "senior_mandatory_amort_pct", "sub_rate", "cash_sweep_pct", "rcf_rate", "tax_rate"}
+              "senior_rate", "senior_mandatory_amort_pct", "sub_rate", "cash_sweep_pct", "rcf_rate", "tax_rate",
+              "transaction_fees_pct_ev", "financing_fees_pct_debt", "senior_oid_pct"}
 
 
 def fmt_value(field_name: str, v: float, lang: str = "it") -> str:
@@ -126,7 +127,7 @@ def fmt_value(field_name: str, v: float, lang: str = "it") -> str:
         return pct(v, lang)
     if field_name.endswith("_x") or "multiple" in field_name:
         return mult(v, lang)
-    if field_name == "hold_period_years":
+    if field_name in ("hold_period_years", "fee_amortization_years"):
         return f"{v:g} {'anni' if lang == 'it' else 'years'}"
     return money(v, lang)
 
@@ -144,14 +145,18 @@ FIELD_LABELS = {
            "senior_mandatory_amort_pct": "rimborso obbligatorio", "sub_rate": "tasso subordinato",
            "cash_sweep_pct": "cash sweep", "rcf_commitment": "linea RCF", "rcf_rate": "tasso RCF",
            "tax_rate": "tasse", "min_cash": "cassa minima", "hold_period_years": "anni di detenzione",
-           "exit_ev_multiple": "multiplo d'uscita"},
+           "exit_ev_multiple": "multiplo d'uscita", "transaction_fees_pct_ev": "fee M&A",
+           "financing_fees_pct_debt": "fee di finanziamento", "senior_oid_pct": "OID sul Term Loan",
+           "fee_amortization_years": "anni di ammortamento fee"},
     "en": {"revenue_at_entry": "revenue", "entry_ebitda": "entry EBITDA", "ebitda_margin": "margin",
            "entry_ev_multiple": "entry multiple", "revenue_growth": "annual growth", "capex_pct_revenue": "capex",
            "da_pct_revenue": "D&A", "nwc_pct_of_rev_growth": "working capital", "total_leverage_x": "total debt",
            "senior_leverage_x": "senior debt", "senior_rate": "senior rate",
            "senior_mandatory_amort_pct": "mandatory repayment", "sub_rate": "subordinated rate",
            "cash_sweep_pct": "cash sweep", "rcf_commitment": "RCF", "rcf_rate": "RCF rate", "tax_rate": "tax",
-           "min_cash": "minimum cash", "hold_period_years": "holding years", "exit_ev_multiple": "exit multiple"},
+           "min_cash": "minimum cash", "hold_period_years": "holding years", "exit_ev_multiple": "exit multiple",
+           "transaction_fees_pct_ev": "M&A fees", "financing_fees_pct_debt": "financing fees",
+           "senior_oid_pct": "Term Loan OID", "fee_amortization_years": "fee amortisation years"},
 }
 
 TEXT: Dict[str, Dict[str, str]] = {

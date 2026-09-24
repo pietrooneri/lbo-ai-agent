@@ -125,6 +125,10 @@ GLOBAL_RANGES: Dict[str, Range] = {
     "cash_sweep_pct": (0.5, 1.0),
     "tax_rate": (0.15, 0.35),
     "hold_period_years": (3, 7),
+    "transaction_fees_pct_ev": (0.01, 0.03),       # M&A advisory, legal, DD
+    "financing_fees_pct_debt": (0.015, 0.035),     # arrangement / underwriting
+    "senior_oid_pct": (0.0, 0.015),                # TLB typically issued at 98.5-100
+    "fee_amortization_years": (5, 7),              # debt tenor
 }
 
 # Relative ranges, expressed against other assumptions.
@@ -154,7 +158,10 @@ def benchmark_table_for_prompt() -> str:
         f"hold {g['hold_period_years'][0]}-{g['hold_period_years'][1]} years, "
         f"senior = {SENIOR_SHARE_OF_TOTAL_LEVERAGE[0]*100:.0f}-100% of total leverage, "
         f"sponsor equity >= {MIN_EQUITY_PCT_OF_USES*100:.0f}% of uses, "
-        f"RCF commitment {mult(RCF_COMMITMENT_X_EBITDA)} EBITDA, minimum cash {pct(MIN_CASH_PCT_REVENUE)} of revenue.",
+        f"RCF commitment {mult(RCF_COMMITMENT_X_EBITDA)} EBITDA, minimum cash {pct(MIN_CASH_PCT_REVENUE)} of revenue, "
+        f"M&A fees {pct(g['transaction_fees_pct_ev'])} of EV, financing fees {pct(g['financing_fees_pct_debt'])} "
+        f"of debt, Term Loan OID {pct(g['senior_oid_pct'])}, amortised over {g['fee_amortization_years'][0]}-"
+        f"{g['fee_amortization_years'][1]} years.",
         f"Reference base rate (3M EURIBOR): {REFERENCE_BASE_RATE*100:.1f}%.",
     ]
     return "\n".join(lines)

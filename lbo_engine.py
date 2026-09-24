@@ -22,8 +22,14 @@ Convention notes (matters for defending this in an interview):
     4. Whatever remains stays on the balance sheet as excess cash.
   Subordinated Notes are bullet and non-call: never swept, repaid at exit.
 - Exit net debt = Term Loan + Sub Notes + RCF - total cash on balance sheet.
-- No transaction fees / OID, no interest income on cash, no RCF commitment
-  fee, no tax-loss carryforwards (tax = max(EBT, 0) * rate).
+- Transaction costs: M&A fees (% of EV), financing fees (% of funded debt) and
+  OID on the Term Loan are Uses of funds paid at close, so they raise the equity
+  cheque. Financing fees + OID are capitalised and amortised straight-line over
+  fee_amortization_years: a non-cash, tax-deductible charge (added back in FCF).
+  M&A fees are treated as a closing cost with no tax effect. Debt is repaid at
+  face value; any unamortised balance at exit is a non-cash write-off.
+- No interest income on cash, no RCF commitment fee, no tax-loss carryforwards
+  (tax = max(EBT, 0) * rate).
 - Only two equity cash flows (entry, exit — no dividends), so
   IRR = MOIC ^ (1 / years) - 1 exactly; no numerical solver needed.
 - Entry terms vs operating plan: entry_ebitda (LTM at closing) sizes the price
@@ -66,6 +72,12 @@ class Assumptions:
     tax_rate: float = 0.25
     min_cash: float = 5.0                # EUR mm, funded at close, never swept
 
+    # Transaction costs (0 = not modelled; old projects load unchanged)
+    transaction_fees_pct_ev: float = 0.0     # M&A advisory, legal, due diligence: % of EV, paid at close
+    financing_fees_pct_debt: float = 0.0     # arrangement / underwriting fees: % of funded debt, paid at close
+    senior_oid_pct: float = 0.0              # Term Loan issued below par: 1% = funded at 99, repaid at 100
+    fee_amortization_years: int = 6          # financing fees + OID amortised over the debt tenor
+
     # Exit
     hold_period_years: int = 5
     exit_ev_multiple: float = 8.0        # base case = entry multiple
@@ -94,6 +106,11 @@ class Assumptions:
                      "senior_mandatory_amort_pct", "cash_sweep_pct", "tax_rate"):
             if not 0 <= getattr(self, name) <= 1:
                 e.append(f"{name} must be between 0 and 1 (decimals, e.g. 0.05 = 5%)")
+        for name in ("transaction_fees_pct_ev", "financing_fees_pct_debt", "senior_oid_pct"):
+            if not 0 <= getattr(self, name) <= 0.10:
+                e.append(f"{name} must be between 0 and 0.10 (decimals, e.g. 0.02 = 2%)")
+        if not isinstance(self.fee_amortization_years, int) or not 1 <= self.fee_amortization_years <= 15:
+            e.append("fee_amortization_years must be an integer between 1 and 15")
         if not 0 < self.ebitda_margin < 1:
             e.append("ebitda_margin must be between 0 and 1")
         if not -0.5 < self.revenue_growth < 1:
@@ -139,6 +156,7 @@ class YearResult:
     rcf_repayment: float
     rcf_end_balance: float
     cash_end_balance: float
+    financing_cost_amortization: float = 0.0   # non-cash: financing fees + OID
 
 
 def build_sources_uses(a: Assumptions) -> dict:
@@ -147,15 +165,22 @@ def build_sources_uses(a: Assumptions) -> dict:
     senior_debt = a.entry_ebitda * a.senior_leverage_x
     sub_debt = total_debt - senior_debt
 
+    transaction_fees = entry_ev * a.transaction_fees_pct_ev
+    financing_fees = total_debt * a.financing_fees_pct_debt
+    oid = senior_debt * a.senior_oid_pct   # lenders fund face x (1 - OID): the gap is a Use
+
     # min_cash is funded once at close and held on the balance sheet,
     # untouched by the sweep, and netted back off debt at exit (see
     # calculate_returns). It is a genuine Use of funds, not just a label.
-    total_uses = entry_ev + a.min_cash
-    sponsor_equity = total_uses - total_debt  # plug; fees excluded in v1
+    total_uses = entry_ev + a.min_cash + transaction_fees + financing_fees + oid
+    sponsor_equity = total_uses - total_debt  # plug
 
     return {
         "entry_ev": entry_ev,
-        "uses": {"purchase_of_enterprise": entry_ev, "minimum_cash_funding": a.min_cash},
+        "uses": {"purchase_of_enterprise": entry_ev, "minimum_cash_funding": a.min_cash,
+                 "transaction_fees": transaction_fees, "financing_fees": financing_fees,
+                 "oid_on_term_loan": oid},
+        "capitalised_financing_costs": financing_fees + oid,
         "sources": {
             "senior_term_loan": senior_debt,
             "subordinated_notes": sub_debt,
@@ -176,6 +201,7 @@ def run_lbo(a: Assumptions) -> List[YearResult]:
 
     revenue = a.revenue_at_entry
     results = []
+    annual_cost_amortization = su["capitalised_financing_costs"] / a.fee_amortization_years
 
     for year in range(1, a.hold_period_years + 1):
         prior_revenue = revenue
@@ -188,14 +214,16 @@ def run_lbo(a: Assumptions) -> List[YearResult]:
         interest_expense = (senior_balance * a.senior_rate + sub_balance * a.sub_rate
                             + rcf_balance * a.rcf_rate)
 
-        ebt = ebit - interest_expense
+        cost_amortization = annual_cost_amortization if year <= a.fee_amortization_years else 0.0
+
+        ebt = ebit - interest_expense - cost_amortization
         tax = max(ebt, 0) * a.tax_rate
         net_income = ebt - tax
 
         capex = revenue * a.capex_pct_revenue
         nwc_change = (revenue - prior_revenue) * a.nwc_pct_of_rev_growth
 
-        fcf_pre_sweep = net_income + da - capex - nwc_change
+        fcf_pre_sweep = net_income + da + cost_amortization - capex - nwc_change   # amortisation is non-cash
 
         mandatory_amort = min(senior_original * a.senior_mandatory_amort_pct, senior_balance)
         available = (cash - a.min_cash) + fcf_pre_sweep - mandatory_amort
@@ -221,7 +249,7 @@ def run_lbo(a: Assumptions) -> List[YearResult]:
             mandatory_amort=mandatory_amort, cash_sweep=cash_sweep,
             senior_end_balance=senior_balance, sub_end_balance=sub_balance,
             rcf_draw=rcf_draw, rcf_repayment=rcf_repayment, rcf_end_balance=rcf_balance,
-            cash_end_balance=cash,
+            cash_end_balance=cash, financing_cost_amortization=cost_amortization,
         ))
 
     return results

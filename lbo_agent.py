@@ -223,7 +223,8 @@ class DealSession:
                 vals["entry_ebitda"] = vals["revenue_at_entry"] * vals["ebitda_margin"]
             elif "revenue_at_entry" in overrides:   # a different-sized company, same LTM margin
                 vals["entry_ebitda"] = vals["revenue_at_entry"] * ltm_margin
-        vals["hold_period_years"] = int(round(vals["hold_period_years"]))
+        for name in ("hold_period_years", "fee_amortization_years"):
+            vals[name] = int(round(vals[name]))
         try:
             return Assumptions(**vals)
         except ValueError as exc:
@@ -255,6 +256,7 @@ class DealSession:
             "entry_ev": round(su["entry_ev"], 1),
             "entry_ltm_ebitda": round(a.entry_ebitda, 1),
             "entry_debt": round(su["total_debt"], 1),
+            "entry_fees_and_oid": round(su["uses"]["transaction_fees"] + su["capitalised_financing_costs"], 1),
             "ltm_margin": round(a.entry_ebitda / a.revenue_at_entry, 4),
             "projected_margin": round(a.ebitda_margin, 4),
             "exit_ev": round(r["exit_ev"], 1),
@@ -415,7 +417,8 @@ class DealSession:
         if s.name != "base":
             base = self.scenarios["base"].assumptions
             for name, value in s.overrides.items():
-                t = audit["trace"][name]
+                t = audit["trace"].setdefault(name, {"value": value, "source": "scenario", "rationale": "",
+                                                      "llm_value": value, "notes": []})   # older projects
                 t.update(source="scenario", rationale=s.rationale, value=value,
                          notes=t["notes"] + [f"scenario '{s.name}': base {getattr(base, name):g} -> {value:g}"])
             audit["trace"]["entry_ebitda"]["value"] = s.assumptions.entry_ebitda
@@ -464,7 +467,8 @@ def make_tools(session: DealSession):
                 ebitda_margin, entry_ev_multiple, revenue_growth, capex_pct_revenue, da_pct_revenue,
                 nwc_pct_of_rev_growth, total_leverage_x, senior_leverage_x, senior_rate,
                 senior_mandatory_amort_pct, sub_rate, cash_sweep_pct, rcf_commitment, rcf_rate,
-                tax_rate, min_cash, hold_period_years, exit_ev_multiple, entry_ebitda (LTM EBITDA,
+                tax_rate, min_cash, hold_period_years, exit_ev_multiple, transaction_fees_pct_ev,
+                financing_fees_pct_debt, senior_oid_pct, fee_amortization_years, entry_ebitda (LTM EBITDA,
                 e.g. a quality-of-earnings adjustment). ebitda_margin is the projected margin.
                 Changing total_leverage_x alone keeps the base senior/sub mix.
             rationale: One sentence on why this scenario matters; it is written into the Excel audit trail.

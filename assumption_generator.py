@@ -43,7 +43,9 @@ NUMERIC_FIELDS = [f.name for f in dataclasses.fields(Assumptions) if f.name != "
 # Fields expressed as decimals; a value above 1 almost certainly means "4" was meant as 4%.
 PCT_FIELDS = {"revenue_growth", "ebitda_margin", "capex_pct_revenue", "da_pct_revenue",
               "nwc_pct_of_rev_growth", "senior_rate", "senior_mandatory_amort_pct", "sub_rate",
-              "cash_sweep_pct", "rcf_rate", "tax_rate"}
+              "cash_sweep_pct", "rcf_rate", "tax_rate",
+              "transaction_fees_pct_ev", "financing_fees_pct_debt", "senior_oid_pct"}
+INT_FIELDS = ("hold_period_years", "fee_amortization_years")
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +84,14 @@ class ProposedAssumptions(BaseModel):
     rcf_rate: Estimate
     tax_rate: Estimate = Field(description="Effective cash tax rate, decimal.")
     min_cash: Estimate = Field(description="Operating cash kept on balance sheet, millions.")
+    transaction_fees_pct_ev: Estimate = Field(
+        description="M&A advisory, legal and due diligence fees paid at close, as a decimal share of EV.")
+    financing_fees_pct_debt: Estimate = Field(
+        description="Arrangement / underwriting fees on the debt paid at close, as a decimal share of funded debt.")
+    senior_oid_pct: Estimate = Field(
+        description="Original issue discount on the Term Loan, decimal (0.005 = issued at 99.5).")
+    fee_amortization_years: Estimate = Field(
+        description="Years over which financing fees and OID are amortised (the debt tenor), whole years.")
     hold_period_years: Estimate = Field(description="Whole years.")
     exit_ev_multiple: Estimate = Field(description="Exit EV / EBITDA, x. Base case: <= entry multiple.")
     key_risks: List[str] = Field(description="3-5 deal-specific risks to underwrite.")
@@ -103,6 +113,9 @@ to move, and say what that reason is.
 sites, market position) and say explicitly in the rationale that size is a guess.
 - entry_ebitda must equal revenue_at_entry x ebitda_margin.
 - This is a base case: exit multiple at or below the entry multiple, no heroic growth or margin story.
+- Transaction costs, unless the description gives them: M&A fees around 1.5-2.5% of EV (higher \
+for small deals), financing fees around 2-3% of the debt, Term Loan OID 0-1%, amortised over a 6-7 \
+year debt tenor.
 - Tax rate: use the statutory corporate rate of the company's main country (e.g. Italy IRES + IRAP \
 ~28%, Germany ~30%, France 25%, UK 25%, Spain 25%).
 - Financing must be consistent with today's market for a company of this size and sector: \
@@ -252,9 +265,10 @@ class _Guardrails:
             if 1 < abs(self.vals[n]) <= 100:
                 self.set(n, self.vals[n] / 100, "percentage given as a whole number, converted to decimal",
                          kind="provided" if n in self.provided else "adjusted")
-        years = self.vals["hold_period_years"]
-        if years != round(years):
-            self.set("hold_period_years", float(round(years)), "rounded to whole years")
+        for name in INT_FIELDS:
+            years = self.vals[name]
+            if years != round(years):
+                self.set(name, float(round(years)), "rounded to whole years")
 
     def reconcile_ebitda(self):
         """entry_ebitda = revenue x margin must hold exactly; provided figures win."""
@@ -338,7 +352,8 @@ class _Guardrails:
 
     def result(self) -> GenerationResult:
         kwargs = dict(self.vals)
-        kwargs["hold_period_years"] = int(kwargs["hold_period_years"])
+        for name in INT_FIELDS:
+            kwargs[name] = int(kwargs[name])
         assumptions = Assumptions(company_name=self.p.company_name, **kwargs)  # engine validation
         return GenerationResult(
             assumptions=assumptions, sector=self.p.sector, sector_rationale=self.p.sector_rationale,

@@ -226,3 +226,11 @@ def test_agent_surfaces_refusal(tmp_path):
     agent = LBOAgent(DealSession(output_dir=str(tmp_path), llm=fake_llm), client=script.client())
     with pytest.raises(RuntimeError, match="declined"):
         agent.ask("x")
+
+
+def test_scenario_can_change_transaction_costs(session):
+    res = session.run_scenario("pricier_debt", {"senior_oid_pct": 0.015, "fee_amortization_years": 5.0}, "tighter market")
+    a = session.scenarios["pricier_debt"].assumptions
+    assert a.senior_oid_pct == 0.015 and a.fee_amortization_years == 5
+    base = session._summary("base", session.scenarios["base"].assumptions)
+    assert res["entry_fees_and_oid"] > base["entry_fees_and_oid"] and res["irr"] < base["irr"]

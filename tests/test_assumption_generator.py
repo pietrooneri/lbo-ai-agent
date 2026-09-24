@@ -15,6 +15,7 @@ BASE = dict(
     total_leverage_x=4.75, senior_leverage_x=3.75, senior_rate=0.065, senior_mandatory_amort_pct=0.05,
     sub_rate=0.10, cash_sweep_pct=1.0, rcf_commitment=40.0, rcf_rate=0.06, tax_rate=0.28,
     min_cash=8.0, hold_period_years=5, exit_ev_multiple=8.5,
+    transaction_fees_pct_ev=0.02, financing_fees_pct_debt=0.025, senior_oid_pct=0.005, fee_amortization_years=6,
 )
 
 
@@ -173,3 +174,12 @@ def test_gym_chain_margin_is_not_clamped_as_retail():
                                     nwc_pct_of_rev_growth=-0.05))
     assert res.assumptions.ebitda_margin == pytest.approx(0.18) and res.adjustments == []
     assert "leisure_fitness" in ProposedAssumptions.model_json_schema()["properties"]["sector"]["enum"]
+
+
+def test_transaction_costs_are_guarded():
+    res = apply_guardrails(proposal(transaction_fees_pct_ev=0.08, financing_fees_pct_debt=2.5,
+                                    senior_oid_pct=0.005, fee_amortization_years=6.4))
+    a = res.assumptions
+    assert a.transaction_fees_pct_ev == pytest.approx(0.03)          # clamped to market range
+    assert a.financing_fees_pct_debt == pytest.approx(0.025)         # "2.5" meant 2.5%
+    assert a.fee_amortization_years == 6 and isinstance(a.fee_amortization_years, int)
