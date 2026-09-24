@@ -1,0 +1,117 @@
+[
+  {
+    "id": "01_valvole",
+    "tags": ["industrials", "it", "reference"],
+    "turns": ["Produttore italiano di valvole industriali, fatturato 320 milioni, clienti oil&gas e utilities, 4 stabilimenti. Qual è il multiplo massimo per un IRR del 20%? Com'è il downside?"],
+    "expect": {
+      "sector": ["industrials"],
+      "provided": {"revenue_at_entry": 320},
+      "tool_calls": [{"tool": "solve_for_target", "args": {"variable": "entry_ev_multiple", "metric": "irr", "target": 0.20}}],
+      "post_close_downside": true
+    }
+  },
+  {
+    "id": "02_saas",
+    "tags": ["software_saas", "it", "figures_given"],
+    "turns": ["Software gestionale in cloud per studi professionali italiani: ricavi 60 milioni quasi tutti ricorrenti, EBITDA 18 milioni, crescita 15% l'anno, churn molto basso. Il venditore chiede 16x EBITDA. Che IRR otteniamo a quel prezzo? Quanta leva servirebbe per arrivare a un MOIC di 3x?"],
+    "expect": {
+      "sector": ["software_saas"],
+      "provided": {"revenue_at_entry": 60, "entry_ebitda": 18, "revenue_growth": 0.15, "entry_ev_multiple": 16},
+      "tool_calls": [{"tool": "solve_for_target", "args": {"variable": "total_leverage_x", "metric": "moic", "target": 3.0}}]
+    }
+  },
+  {
+    "id": "03_uk_retail",
+    "tags": ["consumer_retail", "en", "figures_given"],
+    "turns": ["UK specialty retailer with 120 stores, £450m of sales and a 9% EBITDA margin; like-for-like sales have been flat for two years. A sponsor is looking at 7x EBITDA. What happens to returns if margins compress by 200bps after we buy it?"],
+    "expect": {
+      "sector": ["consumer_retail"],
+      "currency": "GBP",
+      "provided": {"revenue_at_entry": 450, "ebitda_margin": 0.09, "entry_ev_multiple": 7},
+      "scenario_overrides": [{"ebitda_margin": 0.07, "reprice_entry": false}]
+    }
+  },
+  {
+    "id": "04_qoe_reprice",
+    "tags": ["industrials", "it", "reprice"],
+    "turns": ["Fornitore automotive di componenti in alluminio pressofuso, fatturato 500 milioni, EBITDA dichiarato dal venditore 55 milioni. La due diligence ha trovato che l'EBITDA normalizzato è 45 milioni. A che multiplo dell'EBITDA normalizzato possiamo comprare per restare a un IRR del 18%?"],
+    "expect": {
+      "sector": ["industrials"],
+      "provided": {"revenue_at_entry": 500},
+      "entry_ebitda_used": 45,
+      "tool_calls": [{"tool": "solve_for_target", "args": {"variable": "entry_ev_multiple", "metric": "irr", "target": 0.18}}]
+    }
+  },
+  {
+    "id": "05_chem_high_leverage",
+    "tags": ["chemicals", "it", "guardrail"],
+    "turns": ["Azienda di specialità chimiche per l'edilizia, EBITDA 80 milioni. Il club deal vuole mettere 6,5x di leva totale. Quali sono i rischi di questa struttura?"],
+    "expect": {
+      "sector": ["chemicals"],
+      "provided": {"entry_ebitda": 80, "total_leverage_x": 6.5},
+      "guardrail_warning": true
+    }
+  },
+  {
+    "id": "06_packaging_followup",
+    "tags": ["industrials", "it", "multi_turn"],
+    "turns": [
+      "Produttore di imballaggi in cartone ondulato per il food, fatturato 180 milioni, EBITDA 27 milioni, due stabilimenti in Emilia. Fammi il caso base.",
+      "E se la leva totale fosse 3,5x invece?"
+    ],
+    "expect": {
+      "sector": ["industrials"],
+      "provided": {"revenue_at_entry": 180, "entry_ebitda": 27},
+      "scenario_overrides": [{"total_leverage_x": 3.5}]
+    }
+  },
+  {
+    "id": "07_de_it_services",
+    "tags": ["business_services", "en", "three_cases"],
+    "turns": ["German IT services company, €90m revenue, 14% EBITDA margin, mostly multi-year managed-services contracts with Mittelstand clients. What is the maximum entry multiple for a 2.5x MOIC over a 5-year hold? Show base, downside and upside."],
+    "expect": {
+      "sector": ["business_services"],
+      "provided": {"revenue_at_entry": 90, "ebitda_margin": 0.14, "hold_period_years": 5},
+      "tool_calls": [{"tool": "solve_for_target", "args": {"variable": "entry_ev_multiple", "metric": "moic", "target": 2.5}}],
+      "min_scenarios": 2,
+      "post_close_downside": true
+    }
+  },
+  {
+    "id": "08_logistics_inconsistent",
+    "tags": ["logistics_transport", "it", "guardrail"],
+    "turns": ["Operatore logistico conto terzi per la GDO, fatturato 200 milioni, EBITDA 60 milioni. Com'è il caso base?"],
+    "expect": {
+      "sector": ["logistics_transport"],
+      "provided": {"revenue_at_entry": 200, "entry_ebitda": 60},
+      "guardrail_warning": true
+    }
+  },
+  {
+    "id": "09_dental",
+    "tags": ["healthcare_services", "it", "price_given"],
+    "turns": ["Catena di 40 cliniche odontoiatriche nel Nord Italia, fatturato 150 milioni, strategia di buy-and-build. Il venditore chiede 12x EBITDA. Ha senso a quel prezzo?"],
+    "expect": {
+      "sector": ["healthcare_services"],
+      "provided": {"revenue_at_entry": 150, "entry_ev_multiple": 12}
+    }
+  },
+  {
+    "id": "10_pasta",
+    "tags": ["food_beverage", "it", "hold_given"],
+    "turns": ["Pastificio premium con marchio proprio, fatturato 250 milioni, 60% export, uscita prevista in 7 anni. Che rendimenti ci possiamo aspettare?"],
+    "expect": {
+      "sector": ["food_beverage"],
+      "provided": {"revenue_at_entry": 250, "hold_period_years": 7}
+    }
+  },
+  {
+    "id": "11_small_bakery",
+    "tags": ["food_beverage", "it", "edge_small"],
+    "turns": ["Pasticceria artigianale a Torino con 3 negozi, fatturato 4 milioni. È un buon target per un LBO?"],
+    "expect": {
+      "sector": ["food_beverage", "consumer_retail", "consumer_brands_luxury"],
+      "provided": {"revenue_at_entry": 4}
+    }
+  }
+]

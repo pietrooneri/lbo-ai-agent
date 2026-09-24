@@ -1,0 +1,19 @@
+# Environment and caches
+.venv/
+__pycache__/
+.pytest_cache/
+.DS_Store
+
+# Local, personal or generated
+output/
+.claude/
+app_settings.json
+RIASSUNTO_PROGETTO.md
+.nicegui/
+
+# Damodaran raw files are his data: download with `calibrate_benchmarks.py --download`
+data/damodaran_2026_01/
+
+# Never commit secrets
+.env
+*.key

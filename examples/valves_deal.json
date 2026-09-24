@@ -1,0 +1,259 @@
+{
+  "format": "lbo-deal",
+  "version": 1,
+  "saved_at": null,
+  "description": null,
+  "provenance": {
+    "model": "claude-opus-5",
+    "generated_at": "2026-09-23",
+    "recovered_from": "Progetto_Valvole_Italia_base.xlsx"
+  },
+  "base": {
+    "company_name": "Progetto Valvole Italia",
+    "sector": "industrials",
+    "sector_label": "Industrials / manufacturing",
+    "sector_rationale": "Produttore manifatturiero italiano di valvole industriali con 4 stabilimenti, destinate a oil&gas e utilities: classico industrial mid-market ciclico.",
+    "currency": "EUR",
+    "assumptions": {
+      "company_name": "Progetto Valvole Italia",
+      "revenue_at_entry": 320,
+      "entry_ebitda": 44.8,
+      "entry_ev_multiple": 8,
+      "ebitda_margin": 0.14,
+      "revenue_growth": 0.03,
+      "capex_pct_revenue": 0.035,
+      "da_pct_revenue": 0.035,
+      "nwc_pct_of_rev_growth": 0.22,
+      "total_leverage_x": 4.5,
+      "senior_leverage_x": 3.25,
+      "senior_rate": 0.065,
+      "senior_mandatory_amort_pct": 0.05,
+      "cash_sweep_pct": 0.75,
+      "sub_rate": 0.105,
+      "rcf_commitment": 22,
+      "rcf_rate": 0.06,
+      "tax_rate": 0.28,
+      "min_cash": 6.4,
+      "hold_period_years": 5,
+      "exit_ev_multiple": 7.5
+    },
+    "trace": {
+      "revenue_at_entry": {
+        "value": 320,
+        "source": "provided",
+        "rationale": "Fatturato di 320 milioni di euro indicato esplicitamente nella descrizione.",
+        "llm_value": 320,
+        "notes": []
+      },
+      "entry_ebitda": {
+        "value": 44.8,
+        "source": "derived",
+        "rationale": "Calcolato come 320 milioni x 14% di margine EBITDA stimato per un produttore di valvole con componenti critiche.",
+        "llm_value": 44.8,
+        "notes": []
+      },
+      "entry_ev_multiple": {
+        "value": 8,
+        "source": "estimated",
+        "rationale": "Centro del range industrials (7-10x): buona nicchia tecnica ma ciclicità oil&gas e concentrazione clienti giustificano un multiplo non aggressivo.",
+        "llm_value": 8,
+        "notes": []
+      },
+      "ebitda_margin": {
+        "value": 0.14,
+        "source": "estimated",
+        "rationale": "Parte centrale del range industrials (10-20%): valvole per oil&gas hanno contenuto tecnico e after-market, ma il mix con utilities e la concorrenza su gara limitano la marginalità.",
+        "llm_value": 0.14,
+        "notes": []
+      },
+      "revenue_growth": {
+        "value": 0.03,
+        "source": "estimated",
+        "rationale": "Crescita moderata (3%) coerente con capex di utilities e ciclo oil&gas maturo, in linea con il range industrials 2-6%.",
+        "llm_value": 0.03,
+        "notes": []
+      },
+      "capex_pct_revenue": {
+        "value": 0.035,
+        "source": "estimated",
+        "rationale": "Quattro stabilimenti con lavorazioni meccaniche e collaudi richiedono capex di mantenimento medio, centro del range 2,5-5%.",
+        "llm_value": 0.035,
+        "notes": []
+      },
+      "da_pct_revenue": {
+        "value": 0.035,
+        "source": "estimated",
+        "rationale": "Allineato al capex per un business manifatturiero a regime, nel range 2,5-4,5%.",
+        "llm_value": 0.035,
+        "notes": []
+      },
+      "nwc_pct_of_rev_growth": {
+        "value": 0.22,
+        "source": "estimated",
+        "rationale": "Commesse lunghe, scorte di fusioni/forgiati e crediti verso EPC comportano un assorbimento di circolante elevato, parte alta del range 10-25%.",
+        "llm_value": 0.22,
+        "notes": []
+      },
+      "total_leverage_x": {
+        "value": 4.5,
+        "source": "estimated",
+        "rationale": "Parte medio-bassa del range industrials (4-5,5x) per la ciclicità dell'esposizione oil&gas e la natura a commessa dei ricavi.",
+        "llm_value": 4.5,
+        "notes": []
+      },
+      "senior_leverage_x": {
+        "value": 3.25,
+        "source": "estimated",
+        "rationale": "Circa il 72% della leva totale in Term Loan, con il resto in subordinato: struttura standard per un mid-market italiano da ~45 milioni di EBITDA.",
+        "llm_value": 3.25,
+        "notes": []
+      },
+      "senior_rate": {
+        "value": 0.065,
+        "source": "estimated",
+        "rationale": "EURIBOR 2,0% più margine ~450bps, coerente con un emittente mid-market ciclico italiano.",
+        "llm_value": 0.065,
+        "notes": []
+      },
+      "senior_mandatory_amort_pct": {
+        "value": 0.05,
+        "source": "estimated",
+        "rationale": "Ammortamento del 5% annuo del nominale, tipico per un term loan amortizing bancario italiano.",
+        "llm_value": 0.05,
+        "notes": []
+      },
+      "cash_sweep_pct": {
+        "value": 0.75,
+        "source": "estimated",
+        "rationale": "Sweep del 75% del free cash flow eccedente, standard di mercato per strutture bancarie mid-market.",
+        "llm_value": 0.75,
+        "notes": []
+      },
+      "sub_rate": {
+        "value": 0.105,
+        "source": "estimated",
+        "rationale": "Circa 400bps sopra il senior, in linea con debito subordinato/mezzanino per emittenti industriali ciclici.",
+        "llm_value": 0.105,
+        "notes": []
+      },
+      "rcf_commitment": {
+        "value": 22,
+        "source": "estimated",
+        "rationale": "Circa 0,5x EBITDA, necessario per finanziare i picchi di circolante legati alle commesse.",
+        "llm_value": 22,
+        "notes": []
+      },
+      "rcf_rate": {
+        "value": 0.06,
+        "source": "estimated",
+        "rationale": "Prezzo leggermente inferiore al term loan, coerente con linee revolving garantite.",
+        "llm_value": 0.06,
+        "notes": []
+      },
+      "tax_rate": {
+        "value": 0.28,
+        "source": "estimated",
+        "rationale": "Aliquota statutaria italiana IRES 24% più IRAP ~3,9%.",
+        "llm_value": 0.28,
+        "notes": []
+      },
+      "min_cash": {
+        "value": 6.4,
+        "source": "estimated",
+        "rationale": "Pari al 2% dei ricavi, cassa operativa minima per un gruppo manifatturiero multi-sito.",
+        "llm_value": 6.4,
+        "notes": []
+      },
+      "hold_period_years": {
+        "value": 5,
+        "source": "estimated",
+        "rationale": "Holding period standard di 5 anni, necessario per attraversare il ciclo oil&gas e consolidare l'after-market.",
+        "llm_value": 5,
+        "notes": []
+      },
+      "exit_ev_multiple": {
+        "value": 7.5,
+        "source": "estimated",
+        "rationale": "Mezzo turn sotto l'ingresso per prudenza sul base case, data la ciclicità della domanda finale.",
+        "llm_value": 7.5,
+        "notes": []
+      }
+    },
+    "adjustments": [],
+    "warnings": [],
+    "key_risks": [
+      "Ciclicità degli investimenti oil&gas: un rallentamento del capex dei clienti finali comprime volumi e assorbe circolante.",
+      "Concentrazione su pochi clienti EPC/utilities e rischio di gare a prezzo con erosione dei margini.",
+      "Volatilità dei costi di fusioni, forgiati e acciai speciali, con difficoltà di ribaltamento su contratti a prezzo fisso.",
+      "Assorbimento di capitale circolante elevato su commesse lunghe, che riduce la capacità di cash sweep.",
+      "Rischio di esecuzione/qualità e costi di riorganizzazione su quattro stabilimenti potenzialmente sotto-utilizzati."
+    ]
+  },
+  "scenarios": [
+    {
+      "name": "prezzo_max_20irr",
+      "based_on": "base",
+      "rationale": "Solved entry_ev_multiple for irr = 0.2 on 'base'",
+      "overrides": {
+        "entry_ev_multiple": 6.742216644394212
+      },
+      "assumptions": {
+        "company_name": "Progetto Valvole Italia",
+        "revenue_at_entry": 320,
+        "entry_ebitda": 44.8,
+        "entry_ev_multiple": 6.742216644394212,
+        "ebitda_margin": 0.14,
+        "revenue_growth": 0.03,
+        "capex_pct_revenue": 0.035,
+        "da_pct_revenue": 0.035,
+        "nwc_pct_of_rev_growth": 0.22,
+        "total_leverage_x": 4.5,
+        "senior_leverage_x": 3.25,
+        "senior_rate": 0.065,
+        "senior_mandatory_amort_pct": 0.05,
+        "cash_sweep_pct": 0.75,
+        "sub_rate": 0.105,
+        "rcf_commitment": 22,
+        "rcf_rate": 0.06,
+        "tax_rate": 0.28,
+        "min_cash": 6.4,
+        "hold_period_years": 5,
+        "exit_ev_multiple": 7.5
+      }
+    },
+    {
+      "name": "downside",
+      "based_on": "base",
+      "rationale": "Downside post-closing: ciclo capex oil&gas in contrazione con volumi in calo del 2% annuo, pressione prezzo su gare EPC che porta il margine al 10,5%, circolante più pesante e uscita a 6,5x per de-rating del settore.",
+      "overrides": {
+        "ebitda_margin": 0.105,
+        "revenue_growth": -0.02,
+        "nwc_pct_of_rev_growth": 0.3,
+        "exit_ev_multiple": 6.5
+      },
+      "assumptions": {
+        "company_name": "Progetto Valvole Italia",
+        "revenue_at_entry": 320,
+        "entry_ebitda": 44.8,
+        "entry_ev_multiple": 8,
+        "ebitda_margin": 0.105,
+        "revenue_growth": -0.02,
+        "capex_pct_revenue": 0.035,
+        "da_pct_revenue": 0.035,
+        "nwc_pct_of_rev_growth": 0.3,
+        "total_leverage_x": 4.5,
+        "senior_leverage_x": 3.25,
+        "senior_rate": 0.065,
+        "senior_mandatory_amort_pct": 0.05,
+        "cash_sweep_pct": 0.75,
+        "sub_rate": 0.105,
+        "rcf_commitment": 22,
+        "rcf_rate": 0.06,
+        "tax_rate": 0.28,
+        "min_cash": 6.4,
+        "hold_period_years": 5,
+        "exit_ev_multiple": 6.5
+      }
+    }
+  ]
+}

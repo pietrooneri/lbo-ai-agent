@@ -1,0 +1,28 @@
+[project]
+name = "lbo-agent"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=1.8.0",
+    "keyring>=25.7.0",
+    "nicegui>=3.17.1",
+    "openpyxl>=3.1.5",
+    "pydantic>=2.13.5",
+    "pywebview>=6.2.1",
+]
+
+[dependency-groups]
+dev = [
+    "numpy-financial>=1.0.0",
+    "pycel>=1.0b30",
+    "pytest>=9.1.1",
+    "xlrd>=2.0.2",
+]
+
+[tool.pytest.ini_options]
+pythonpath = [".", "tests", "evals"]
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore:ast.Str is deprecated:DeprecationWarning",
+    "ignore:Attribute s is deprecated:DeprecationWarning",
+]
