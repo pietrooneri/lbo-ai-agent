@@ -17,3 +17,7 @@ data/damodaran_2026_01/
 # Never commit secrets
 .env
 *.key
+
+# Capital IQ exports are licensed data: only the README is published
+data/capiq/*
+!data/capiq/README.md
