@@ -284,3 +284,12 @@ def test_covenants_in_scenarios(session):
     assert any(w.startswith("Covenant breach in year 1") for w in res["engine_warnings"])
     res = session.run_scenario("steps", {}, "custom step-downs", plan={"max_net_leverage": [6.0, 5.5, 5.0]})
     assert res["covenants"]["max_net_leverage_by_year"][:3] == [6.0, 5.5, 5.0]
+
+
+def test_circularity_switch_in_scenarios(session):
+    res = session.run_scenario("average_interest", {"interest_on_average_balance": 1}, "desk convention")
+    a = session.scenarios["average_interest"].assumptions
+    assert a.interest_on_average_balance is True
+    base = session._summary("base", session.scenarios["base"].assumptions)
+    assert res["irr"] != base["irr"]
+    assert res["overrides_vs_base"] == {"interest_on_average_balance": True}

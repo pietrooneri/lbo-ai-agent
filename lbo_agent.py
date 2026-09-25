@@ -44,9 +44,9 @@ from assumption_generator import (
     generate_assumptions,
 )
 from excel_export import export_to_excel
-from lbo_engine import COVENANT_FIELDS, PLAN_DRIVERS, PLAN_FIELDS, SCHEDULE_FIELDS, Assumptions, run_model
+from lbo_engine import COVENANT_FIELDS, FLAG_FIELDS, PLAN_DRIVERS, PLAN_FIELDS, SCHEDULE_FIELDS, Assumptions, run_model
 
-OVERRIDABLE = NUMERIC_FIELDS + list(COVENANT_FIELDS)         # flat values accepted in `overrides`
+OVERRIDABLE = NUMERIC_FIELDS + list(COVENANT_FIELDS) + list(FLAG_FIELDS)   # accepted in `overrides`
 SCHEDULE_DRIVERS = PLAN_DRIVERS + ("max_net_leverage",)       # per-year lists accepted in `plan`
 from sector_benchmarks import GLOBAL_RANGES, SECTORS
 
@@ -234,6 +234,9 @@ class DealSession:
         if "total_leverage_x" in overrides and "senior_leverage_x" not in overrides and base.total_leverage_x > 0:
             vals["senior_leverage_x"] = overrides["total_leverage_x"] * base.senior_leverage_x / base.total_leverage_x
         vals.update(overrides)
+        for flag in FLAG_FIELDS:                            # 0/1 from the tool -> boolean
+            if flag in overrides:
+                vals[flag] = bool(overrides[flag])
         for driver in SCHEDULE_DRIVERS:
             if driver in plan:                              # a new year-by-year profile
                 vals[f"{driver}_by_year"] = list(plan[driver]) or None
@@ -511,7 +514,8 @@ def make_tools(session: DealSession):
                 senior_mandatory_amort_pct, sub_rate, cash_sweep_pct, rcf_commitment, rcf_rate,
                 tax_rate, min_cash, hold_period_years, exit_ev_multiple, transaction_fees_pct_ev,
                 financing_fees_pct_debt, senior_oid_pct, fee_amortization_years, max_net_leverage and
-                min_interest_cover (covenants, 0 = none), entry_ebitda (LTM EBITDA,
+                min_interest_cover (covenants, 0 = none), interest_on_average_balance (1 = interest
+                on average balances, the circular method; 0 = opening balances), entry_ebitda (LTM EBITDA,
                 e.g. a quality-of-earnings adjustment). ebitda_margin is the projected margin.
                 Changing total_leverage_x alone keeps the base senior/sub mix.
             rationale: One sentence on why this scenario matters; it is written into the Excel audit trail.

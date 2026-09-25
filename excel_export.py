@@ -106,6 +106,8 @@ ASSUMPTION_LAYOUT = [
     ("sub_rate", "Subordinated Notes interest rate (bullet)", "%", FMT_PCT, False),
     ("rcf_commitment", "RCF commitment (undrawn at close)", "{cur} mm", FMT_MM, False),
     ("rcf_rate", "RCF interest rate", "%", FMT_PCT, False),
+    ("interest_on_average_balance", "Interest on average balance (circularity switch)", "1 = on, 0 = opening",
+     FMT_INT, False),
     ("Tax and cash", None, None, None, None),
     ("tax_rate", "Tax rate (no loss carry-forward)", "%", FMT_PCT, False),
     ("min_cash", "Minimum cash (funded at close, never swept)", "{cur} mm", FMT_MM, False),
@@ -156,6 +158,7 @@ def _write_assumptions(ws, a: Assumptions, audit: Optional[dict], cur: str, n_ye
             value = f"=B{rows['entry_ebitda']}/B{rows['revenue_at_entry']}"
         else:
             value = getattr(a, name)
+            value = int(value) if isinstance(value, bool) else value
         _put(ws, f"B{row}", value, fmt=fmt, fill=YELLOW_FILL if key else None)
         if t:
             _put(ws, f"D{row}", t["source"])
@@ -254,7 +257,18 @@ class Line:
     highlight: bool = False
 
 
-def _lbo_layout(A: Dict[str, str], n_years: int, last: str) -> List[Line]:
+def _interest(A: Dict[str, str], balance: str, rate: str, circular: bool):
+    """Interest line. circular=True (the file users get): switch 1 = average of opening and this
+    year's closing balance, switch 0 = opening balance; the closing-balance reference makes the
+    workbook circular, so iterative calculation is enabled. circular=False writes the opening-balance
+    formula only: a loop-free twin used by the test suite, whose evaluator cannot handle loops."""
+    if circular:
+        return lambda c, p, R: (f"=IF({A['interest_on_average_balance']}=1,({p}{R[balance]}+{c}{R[balance]})/2,"
+                                f"{p}{R[balance]})*{A[rate]}")
+    return lambda c, p, R: f"={p}{R[balance]}*{A[rate]}"
+
+
+def _lbo_layout(A: Dict[str, str], n_years: int, last: str, circular: bool = True) -> List[Line]:
     yr = lambda R, key: f"$D${R[key]}:${last}${R[key]}"   # projection-year range of one line
     pct_of_total = lambda R, r: f"=C{r}/$C${R['su_uses']}"
     x_ebitda = lambda R, r: f"=C{r}/$C${R['su_ebitda']}"
@@ -307,12 +321,9 @@ def _lbo_layout(A: Dict[str, str], n_years: int, last: str) -> List[Line]:
           year=lambda c, p, R: f"={c}{R['ebitda']}/{c}{R['revenue']}", fmt=FMT_PCT, memo=True),
         L("da", "Less: D&A", year=lambda c, p, R: f"={c}{R['revenue']}*{A['da_pct_revenue']}"),
         L("ebit", "EBIT", year=lambda c, p, R: f"={c}{R['ebitda']}-{c}{R['da']}", bold=True),
-        L("int_senior", "Less: interest on Term Loan (opening balance)",
-          year=lambda c, p, R: f"={p}{R['tl_end']}*{A['senior_rate']}"),
-        L("int_sub", "Less: interest on Sub Notes (opening balance)",
-          year=lambda c, p, R: f"={p}{R['sub_end']}*{A['sub_rate']}"),
-        L("int_rcf", "Less: interest on RCF (opening balance)",
-          year=lambda c, p, R: f"={p}{R['rcf_end']}*{A['rcf_rate']}"),
+        L("int_senior", "Less: interest on Term Loan", year=_interest(A, "tl_end", "senior_rate", circular)),
+        L("int_sub", "Less: interest on Sub Notes", year=_interest(A, "sub_end", "sub_rate", circular)),
+        L("int_rcf", "Less: interest on RCF", year=_interest(A, "rcf_end", "rcf_rate", circular)),
         L("interest", "Total interest expense", year=lambda c, p, R: f"=SUM({c}{R['int_senior']}:{c}{R['int_rcf']})"),
         L("fee_amort", "Less: amortisation of financing fees + OID (non-cash)",
           year=lambda c, p, R: (f"=IF({c}{R['years']}<={A['fee_amortization_years']},"
@@ -466,7 +477,7 @@ def lbo_rows(a: Assumptions) -> Dict[str, int]:
     return _assign_rows(_lbo_layout(dummy, n_years, last))
 
 
-def _write_lbo(ws, a: Assumptions, A: Dict[str, str], cur: str, n_years: int) -> Dict[str, int]:
+def _write_lbo(ws, a: Assumptions, A: Dict[str, str], cur: str, n_years: int, circular: bool = True) -> Dict[str, int]:
     ws.sheet_view.showGridLines = False
     last = get_column_letter(ENTRY_COL + n_years)
     year_cols = [get_column_letter(ENTRY_COL + t) for t in range(1, n_years + 1)]
@@ -475,7 +486,7 @@ def _write_lbo(ws, a: Assumptions, A: Dict[str, str], cur: str, n_years: int) ->
     for col in ["C"] + year_cols:
         ws.column_dimensions[col].width = 11
 
-    layout = _lbo_layout(A, n_years, last)
+    layout = _lbo_layout(A, n_years, last, circular)
     R = _assign_rows(layout)                 # pass 1: rows first, so formulas can point forward
 
     def resolve(f, *args):
@@ -591,7 +602,9 @@ def _write_sensitivity(ws, R: Dict[str, int], top: int, n_years: int, last: str)
 # --- Audit sheet ---------------------------------------------------------------
 
 CONVENTIONS = [
-    "Interest on opening balances of every tranche: no circular reference, no iterative calculation.",
+    "Interest: on opening balances by default (no circularity). The circularity switch on the Assumptions "
+    "sheet moves it to average balances (opening + closing) / 2; the workbook has iterative calculation "
+    "enabled for that, and setting the switch back to 0 breaks the loop if the model ever shows errors.",
     "Cash waterfall: FCF + opening surplus cash -> Term Loan mandatory amortization -> shortfall drawn on "
     "RCF / surplus repays RCF first, then sweeps the Term Loan -> remainder kept as cash.",
     "Subordinated Notes are bullet and non-call: repaid at exit out of the equity value.",
@@ -688,7 +701,7 @@ def _write_audit(ws, a: Assumptions, audit: Optional[dict], R: Dict[str, int], c
 
 # --- entry point -----------------------------------------------------------------
 
-def export_to_excel(a: Assumptions, path: str, audit: Optional[dict] = None) -> str:
+def export_to_excel(a: Assumptions, path: str, audit: Optional[dict] = None, circular: bool = True) -> str:
     """Write the live LBO workbook. `audit` is GenerationResult.to_dict() (optional)."""
     cur = (audit or {}).get("currency") or "EUR"
     n_years = max(MIN_PROJECTION_YEARS, a.hold_period_years)
@@ -702,7 +715,7 @@ def export_to_excel(a: Assumptions, path: str, audit: Optional[dict] = None) -> 
 
     A = _write_assumptions(ws_a, a, audit, cur, n_years)
     A |= _write_plan(ws_plan, a, audit, n_years)
-    R = _write_lbo(ws_lbo, a, A, cur, n_years)
+    R = _write_lbo(ws_lbo, a, A, cur, n_years, circular)
     _write_audit(ws_audit, a, audit, R, cur)
 
     for ws in wb.worksheets:              # print: landscape, one page wide
@@ -713,6 +726,12 @@ def export_to_excel(a: Assumptions, path: str, audit: Optional[dict] = None) -> 
 
     wb.active = 2                        # open on the LBO sheet
     wb.calculation.fullCalcOnLoad = True  # openpyxl stores no cached values: force Excel to compute
+    # The interest lines reference this year's closing balances (used when the circularity switch is 1):
+    # enable iterative calculation, as desk models with a circ switch do.
+    if circular:
+        wb.calculation.iterate = True
+        wb.calculation.iterateCount = 100
+        wb.calculation.iterateDelta = 1e-9
     wb.save(path)
     return path
 

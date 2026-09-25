@@ -7,11 +7,12 @@ Assumption generation (assumption_generator.py) and Excel export sit on top
 of this and must never change its math.
 
 Convention notes (matters for defending this in an interview):
-- Interest is calculated on the BEGINNING-of-year balance of every tranche
-  (Term Loan, Sub Notes, RCF), not the average. This avoids the classic
-  circular reference (interest depends on cash flow, cash flow depends on
-  interest) — which also keeps the future Excel export free of circularity.
-  Real desks often use average-balance + a circularity switch instead.
+- Interest: by default on the OPENING balance of every tranche (Term Loan, Sub
+  Notes, RCF), which avoids the circular reference (interest depends on cash
+  flow, cash flow depends on interest). The circularity switch
+  (interest_on_average_balance) moves it to the AVERAGE balance, as most desk
+  models do: solved here by fixed-point iteration each year, and in Excel with
+  iterative calculation enabled.
 - Cash waterfall, each year:
     1. Cash available = FCF (after interest and tax) + cash held above the
        minimum balance from the prior year.
@@ -57,6 +58,7 @@ PLAN_FIELDS = tuple(f"{d}_by_year" for d in PLAN_DRIVERS)
 # All per-year lists (operating plan + covenant step-downs) share the same conventions.
 SCHEDULE_FIELDS = PLAN_FIELDS + ("max_net_leverage_by_year",)
 COVENANT_FIELDS = ("max_net_leverage", "min_interest_cover")
+FLAG_FIELDS = ("interest_on_average_balance",)
 
 
 @dataclass
@@ -104,6 +106,10 @@ class Assumptions:
     max_net_leverage_by_year: Optional[Tuple[float, ...]] = None   # step-downs; last value repeats
     min_interest_cover: float = 0.0                                # EBITDA / cash interest floor, x
 
+    # Circularity switch: False = interest on opening balances (no circularity);
+    # True = interest on average balances, solved iteratively (Excel: iterative calculation)
+    interest_on_average_balance: bool = False
+
     # Exit
     hold_period_years: int = 5
     exit_ev_multiple: float = 8.0        # base case = entry multiple
@@ -131,6 +137,9 @@ class Assumptions:
                 if v is not None and (not isinstance(v, tuple) or not 1 <= len(v) <= 15 or any(
                         isinstance(x, bool) or not isinstance(x, (int, float)) for x in v)):
                     e.append(f"{f.name} must be a list of 1-15 numbers (one per year), got {v!r}")
+            elif f.name == "interest_on_average_balance":
+                if not isinstance(v, bool):
+                    e.append(f"interest_on_average_balance must be true or false, got {v!r}")
             elif f.name != "company_name" and (isinstance(v, bool) or not isinstance(v, (int, float))):
                 e.append(f"{f.name} must be a number, got {v!r}")
         if e:
@@ -253,6 +262,10 @@ def build_sources_uses(a: Assumptions) -> dict:
     }
 
 
+MAX_CIRCULARITY_ITERATIONS = 200
+CIRCULARITY_TOLERANCE = 1e-10
+
+
 def run_lbo(a: Assumptions) -> List[YearResult]:
     su = build_sources_uses(a)
     senior_balance = su["sources"]["senior_term_loan"]
@@ -268,51 +281,65 @@ def run_lbo(a: Assumptions) -> List[YearResult]:
     for year in range(1, a.hold_period_years + 1):
         prior_revenue = revenue
         revenue = revenue * (1 + a.plan_value("revenue_growth", year))
-        ebitda = revenue * a.plan_value("ebitda_margin", year)
-        da = revenue * a.da_pct_revenue
-        ebit = ebitda - da
 
-        # Interest on BEGINNING balances (see convention note above)
-        interest_expense = (senior_balance * a.senior_rate + sub_balance * a.sub_rate
-                            + rcf_balance * a.rcf_rate)
+        def project(interest_expense: float) -> YearResult:
+            """One year given its interest charge: P&L, FCF, waterfall and closing balances."""
+            ebitda = revenue * a.plan_value("ebitda_margin", year)
+            da = revenue * a.da_pct_revenue
+            ebit = ebitda - da
+            cost_amortization = annual_cost_amortization if year <= a.fee_amortization_years else 0.0
 
-        cost_amortization = annual_cost_amortization if year <= a.fee_amortization_years else 0.0
+            ebt = ebit - interest_expense - cost_amortization
+            tax = max(ebt, 0) * a.tax_rate
+            net_income = ebt - tax
 
-        ebt = ebit - interest_expense - cost_amortization
-        tax = max(ebt, 0) * a.tax_rate
-        net_income = ebt - tax
+            capex = revenue * a.plan_value("capex_pct_revenue", year)
+            nwc_change = (revenue - prior_revenue) * a.nwc_pct_of_rev_growth
+            fcf_pre_sweep = net_income + da + cost_amortization - capex - nwc_change   # amortisation is non-cash
 
-        capex = revenue * a.plan_value("capex_pct_revenue", year)
-        nwc_change = (revenue - prior_revenue) * a.nwc_pct_of_rev_growth
+            mandatory_amort = min(senior_original * a.senior_mandatory_amort_pct, senior_balance)
+            available = (cash - a.min_cash) + fcf_pre_sweep - mandatory_amort
+            rcf_draw = rcf_repayment = cash_sweep = 0.0
+            if available < 0:
+                rcf_draw = -available  # shortfall funded by the revolver, never by thin air
+                available = 0.0
+            else:
+                rcf_repayment = min(available, rcf_balance)
+                available -= rcf_repayment
+                cash_sweep = min(available * a.cash_sweep_pct, senior_balance - mandatory_amort)
+                available -= cash_sweep
 
-        fcf_pre_sweep = net_income + da + cost_amortization - capex - nwc_change   # amortisation is non-cash
+            return YearResult(
+                year=year, revenue=revenue, ebitda=ebitda, da=da, ebit=ebit,
+                interest_expense=interest_expense, ebt=ebt, tax=tax, net_income=net_income,
+                capex=capex, nwc_change=nwc_change, fcf_pre_sweep=fcf_pre_sweep,
+                mandatory_amort=mandatory_amort, cash_sweep=cash_sweep,
+                senior_end_balance=senior_balance - mandatory_amort - cash_sweep, sub_end_balance=sub_balance,
+                rcf_draw=rcf_draw, rcf_repayment=rcf_repayment, rcf_end_balance=rcf_balance + rcf_draw - rcf_repayment,
+                cash_end_balance=a.min_cash + available,  # sub notes are bullet: surplus accumulates
+                financing_cost_amortization=cost_amortization,
+            )
 
-        mandatory_amort = min(senior_original * a.senior_mandatory_amort_pct, senior_balance)
-        available = (cash - a.min_cash) + fcf_pre_sweep - mandatory_amort
+        # Interest on opening balances: no circularity (see convention note above).
+        interest = senior_balance * a.senior_rate + sub_balance * a.sub_rate + rcf_balance * a.rcf_rate
+        r = project(interest)
+        if a.interest_on_average_balance:
+            # Circularity switch on: interest on (opening + closing) / 2, and the closing balances
+            # depend on the interest through tax, FCF and the sweep. Fixed-point iteration: each
+            # pass changes interest by < rate x (1 - tax) / 2 of the previous change, so it converges.
+            for _ in range(MAX_CIRCULARITY_ITERATIONS):
+                new = (a.senior_rate * (senior_balance + r.senior_end_balance) / 2
+                       + a.sub_rate * (sub_balance + r.sub_end_balance) / 2
+                       + a.rcf_rate * (rcf_balance + r.rcf_end_balance) / 2)
+                if abs(new - interest) < CIRCULARITY_TOLERANCE:
+                    break
+                interest = new
+                r = project(interest)
+            else:
+                raise RuntimeError(f"Average-balance interest did not converge in year {year}")
 
-        rcf_draw = rcf_repayment = cash_sweep = 0.0
-        if available < 0:
-            rcf_draw = -available  # shortfall funded by the revolver, never by thin air
-            available = 0.0
-        else:
-            rcf_repayment = min(available, rcf_balance)
-            available -= rcf_repayment
-            cash_sweep = min(available * a.cash_sweep_pct, senior_balance - mandatory_amort)
-            available -= cash_sweep
-
-        senior_balance = senior_balance - mandatory_amort - cash_sweep
-        rcf_balance = rcf_balance + rcf_draw - rcf_repayment
-        cash = a.min_cash + available  # sub notes are bullet: surplus accumulates
-
-        results.append(YearResult(
-            year=year, revenue=revenue, ebitda=ebitda, da=da, ebit=ebit,
-            interest_expense=interest_expense, ebt=ebt, tax=tax, net_income=net_income,
-            capex=capex, nwc_change=nwc_change, fcf_pre_sweep=fcf_pre_sweep,
-            mandatory_amort=mandatory_amort, cash_sweep=cash_sweep,
-            senior_end_balance=senior_balance, sub_end_balance=sub_balance,
-            rcf_draw=rcf_draw, rcf_repayment=rcf_repayment, rcf_end_balance=rcf_balance,
-            cash_end_balance=cash, financing_cost_amortization=cost_amortization,
-        ))
+        senior_balance, rcf_balance, cash = r.senior_end_balance, r.rcf_end_balance, r.cash_end_balance
+        results.append(r)
 
     return results
 

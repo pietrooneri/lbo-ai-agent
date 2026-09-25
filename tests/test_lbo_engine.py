@@ -34,6 +34,12 @@ SCENARIOS = {
                                    senior_leverage_x=5.0, max_net_leverage_by_year=[7.0, 6.5, 6.0],
                                    min_interest_cover=2.25),
     "covenant_ok": Assumptions(max_net_leverage_by_year=[6.5, 6.0, 5.5, 5.0], min_interest_cover=2.0),
+    # Circularity switch on: plain case and a stressed one that draws and repays the RCF
+    "average_interest": Assumptions(interest_on_average_balance=True),
+    "average_interest_rcf": Assumptions(ebitda_margin=0.12, entry_ebitda=90, revenue_growth=0.08,
+                                        total_leverage_x=6.0, senior_leverage_x=5.0,
+                                        senior_mandatory_amort_pct=0.10, hold_period_years=7,
+                                        interest_on_average_balance=True),
     "fees_oid": Assumptions(transaction_fees_pct_ev=0.02, financing_fees_pct_debt=0.025, senior_oid_pct=0.01,
                             fee_amortization_years=4),
 }
@@ -232,3 +238,28 @@ def test_covenant_breach_is_flagged():
 
 def test_no_covenants_by_default():
     assert run_model(Assumptions())["returns"]["covenants"] is None
+
+
+@pytest.mark.parametrize("name", ["average_interest", "average_interest_rcf"])
+def test_average_balance_interest_is_a_fixed_point(name):
+    """With the switch on, each year's interest equals rate x average of opening and closing
+    balances of the SAME solved year (the circular reference is resolved, not approximated)."""
+    a = SCENARIOS[name]
+    su = build_sources_uses(a)
+    senior, sub, rcf = su["sources"]["senior_term_loan"], su["sources"]["subordinated_notes"], 0.0
+    for r in run_lbo(a):
+        expected = (a.senior_rate * (senior + r.senior_end_balance) / 2 + a.sub_rate * (sub + r.sub_end_balance) / 2
+                    + a.rcf_rate * (rcf + r.rcf_end_balance) / 2)
+        assert r.interest_expense == pytest.approx(expected, abs=1e-8)
+        senior, sub, rcf = r.senior_end_balance, r.sub_end_balance, r.rcf_end_balance
+
+
+def test_average_balance_interest_is_lower_while_deleveraging():
+    opening, average = run_model(Assumptions()), run_model(SCENARIOS["average_interest"])
+    assert average["years"][0].interest_expense < opening["years"][0].interest_expense
+    assert average["returns"]["irr"] > opening["returns"]["irr"]
+
+
+def test_switch_must_be_a_boolean():
+    with pytest.raises(ValueError, match="true or false"):
+        dataclasses.replace(Assumptions(), interest_on_average_balance=1)

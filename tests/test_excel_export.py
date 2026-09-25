@@ -3,6 +3,7 @@ These tests evaluate it (pycel) and require it to match lbo_engine.py line by li
 
 import dataclasses
 import math
+import re
 
 import openpyxl
 import pytest
@@ -42,8 +43,11 @@ class Book:
         self.xl = ExcelCompiler(filename=str(path), plugins=("pycel_plugins",))
         self.R = lbo_rows(a)
 
+    def evaluate(self, address):
+        return self.xl.evaluate(address)
+
     def lbo(self, key, col="C"):
-        return self.xl.evaluate(f"LBO!{col}{self.R[key]}")
+        return self.evaluate(f"LBO!{col}{self.R[key]}")
 
     def year(self, key, t):
         return self.lbo(key, get_column_letter(3 + t))
@@ -58,9 +62,12 @@ class Book:
             self.xl.set_value(_assumption_cell(name), value)
 
 
-def _export(tmp_path, a, audit=None):
+def _export(tmp_path, a, audit=None, circular=False):
+    """circular=False: the loop-free twin of the workbook (opening-balance interest formulas), which
+    pycel can evaluate; everything else is identical to the file users get. The circular interest
+    formulas are covered by the tests at the end of this file and by a check in Microsoft Excel."""
     path = tmp_path / "lbo.xlsx"
-    export_to_excel(a, str(path), audit)
+    export_to_excel(a, str(path), audit, circular=circular)
     return Book(path, a)
 
 
@@ -80,7 +87,7 @@ def _assert_matches_engine(book, a):
         assert book.lbo("min_cov") == pytest.approx(ret["min_interest_coverage"], abs=1e-9)
     assert (book.lbo("flag_rcf") != "-") == any("RCF" in w for w in ret["warnings"])
     assert (book.lbo("flag_cov") != "-") == any("coverage" in w for w in ret["warnings"])
-    assert book.xl.evaluate("LBO!C3") == "OK"
+    assert book.evaluate("LBO!C3") == "OK"
     cov = ret["covenants"]
     if cov:
         for t in cov["tests"]:
@@ -93,7 +100,10 @@ def _assert_matches_engine(book, a):
     assert (book.lbo("flag_cov_breach") != "-") == any("Covenant breach" in w for w in ret["warnings"])
 
 
-@pytest.mark.parametrize("name", SCENARIOS)
+OPENING_BALANCE_SCENARIOS = [n for n, a in SCENARIOS.items() if not a.interest_on_average_balance]
+
+
+@pytest.mark.parametrize("name", OPENING_BALANCE_SCENARIOS)
 def test_workbook_matches_engine(tmp_path, name):
     a = SCENARIOS[name]
     _assert_matches_engine(_export(tmp_path, a), a)
@@ -103,7 +113,7 @@ def test_workbook_from_generator_output(tmp_path):
     res = apply_guardrails(proposal(provided={"revenue_at_entry"}, ebitda_margin=0.35))
     book = _export(tmp_path, res.assumptions, res.to_dict())
     _assert_matches_engine(book, res.assumptions)
-    assert book.xl.evaluate("Audit!C10").startswith("Matches the Python engine")
+    assert book.evaluate("Audit!C10").startswith("Matches the Python engine")
     wb = openpyxl.load_workbook(tmp_path / "lbo.xlsx")
     notes = [c.value for c in wb["Plan"]["C"] if c.value]           # margin now lives on the Plan sheet
     assert any("Guardrail" in n and "outside industrials margin range" in n for n in notes)
@@ -122,7 +132,7 @@ def test_editing_an_input_in_excel_reprices_the_model(tmp_path, name, value):
     ret = run_model(flexed)["returns"]
     assert book.lbo("moic") == pytest.approx(ret["moic"], abs=1e-9)
     assert book.lbo("irr") == pytest.approx(ret["irr"], abs=1e-9)
-    assert book.xl.evaluate("Audit!C10").startswith("Inputs changed")
+    assert book.evaluate("Audit!C10").startswith("Inputs changed")
 
 
 def test_sensitivity_table_matches_engine(tmp_path):
@@ -134,7 +144,7 @@ def test_sensitivity_table_matches_engine(tmp_path):
         for j, hold in enumerate([3, 4, 5, 6, 7]):
             cell = f"LBO!{get_column_letter(4 + j)}{sens_hdr + 1 + i}"
             flexed = dataclasses.replace(base, exit_ev_multiple=base.exit_ev_multiple + off, hold_period_years=hold)
-            assert book.xl.evaluate(cell) == pytest.approx(run_model(flexed)["returns"]["irr"], abs=1e-9), cell
+            assert book.evaluate(cell) == pytest.approx(run_model(flexed)["returns"]["irr"], abs=1e-9), cell
 
 
 def test_lbo_sheet_has_no_hardcoded_numbers(tmp_path):
@@ -153,7 +163,49 @@ def test_lbo_sheet_has_no_hardcoded_numbers(tmp_path):
 def test_editing_one_year_of_the_plan_reprices_that_year_only(tmp_path):
     base = SCENARIOS["base"]
     book = _export(tmp_path, base)
-    book.xl.evaluate("Audit!C10")
+    book.evaluate("Audit!C10")
     book.xl.set_value(f"Plan!F{PLAN_FIRST_ROW + 1}", 0.15)          # margin, year 3 only
     flexed = dataclasses.replace(base, ebitda_margin_by_year=[0.20, 0.20, 0.15, 0.20])
     assert book.lbo("moic") == pytest.approx(run_model(flexed)["returns"]["moic"], abs=1e-9)
+
+
+@pytest.mark.parametrize("name", ["average_interest", "average_interest_rcf"])
+def test_average_balance_interest_formulas(tmp_path, name):
+    """Circularity switch on. pycel does not solve the whole reference loop consistently (its
+    total can lag its components), so this checks each interest formula at pycel's state:
+    interest = rate x (opening + closing) / 2 for every tranche and year. The full numbers are
+    checked against the engine in Microsoft Excel (see README)."""
+    a = SCENARIOS[name]
+    book = _export(tmp_path, a, circular=True)
+    book.lbo("moic")
+    book.xl.recalculate()
+    for t in range(1, a.hold_period_years + 1):
+        for line, balance, rate in (("int_senior", "tl_end", a.senior_rate), ("int_sub", "sub_end", a.sub_rate),
+                                    ("int_rcf", "rcf_end", a.rcf_rate)):
+            opening, closing = book.year(balance, t - 1) if t > 1 else book.lbo(balance), book.year(balance, t)
+            assert book.year(line, t) == pytest.approx(rate * (opening + closing) / 2, abs=1e-6), (line, t)
+
+
+def test_workbook_has_iterative_calculation_and_switch(tmp_path):
+    export_to_excel(SCENARIOS["average_interest"], str(tmp_path / "lbo.xlsx"))
+    wb = openpyxl.load_workbook(tmp_path / "lbo.xlsx")
+    assert wb.calculation.iterate and wb.calculation.iterateCount >= 100
+    assert wb["Assumptions"][_assumption_cell("interest_on_average_balance").split("!")[1]].value == 1
+
+
+def test_user_workbook_interest_formulas_carry_the_switch(tmp_path):
+    """The file users get: each interest line averages opening and closing balance when the switch
+    is 1 and uses the opening balance when it is 0; the loop-free twin differs only there."""
+    a = SCENARIOS["base"]
+    export_to_excel(a, str(tmp_path / "user.xlsx"))
+    export_to_excel(a, str(tmp_path / "twin.xlsx"), circular=False)
+    user, twin = (openpyxl.load_workbook(tmp_path / f)["LBO"] for f in ("user.xlsx", "twin.xlsx"))
+    R, switch = lbo_rows(a), _assumption_cell("interest_on_average_balance")
+    switch = switch.replace("Assumptions!B", "Assumptions!$B$")
+    for line, bal in (("int_senior", "tl_end"), ("int_sub", "sub_end"), ("int_rcf", "rcf_end")):
+        f = user[f"E{R[line]}"].value
+        assert f.startswith(f"=IF({switch}=1,(D{R[bal]}+E{R[bal]})/2,D{R[bal]})*"), f
+        assert twin[f"E{R[line]}"].value == "=D{}*{}".format(R[bal], f.split(")*")[1])
+    differing = [c.coordinate for row in user.iter_rows() for c in row
+                 if c.value != twin[c.coordinate].value]
+    assert {int(re.sub("[A-Z]", "", x)) for x in differing} == {R["int_senior"], R["int_sub"], R["int_rcf"]}

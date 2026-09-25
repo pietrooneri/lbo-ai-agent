@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field
 
 import dataclasses as _dc
 
-from lbo_engine import (COVENANT_FIELDS, PLAN_DRIVERS, PLAN_FIELDS, SCHEDULE_FIELDS, Assumptions,
+from lbo_engine import (COVENANT_FIELDS, FLAG_FIELDS, PLAN_DRIVERS, PLAN_FIELDS, SCHEDULE_FIELDS, Assumptions,
                         covenant_tests, run_lbo, run_model)
 from sector_benchmarks import (COVENANT_HEADROOM, 
     GLOBAL_RANGES, MIN_CASH_PCT_REVENUE, MIN_EQUITY_PCT_OF_USES, MIN_SUB_SPREAD_OVER_SENIOR,
@@ -43,7 +43,7 @@ DEFAULT_MODEL = os.environ.get("LBO_AGENT_MODEL", "claude-opus-5")
 FALLBACK_MODELS = {"claude-opus-5", "claude-fable-5-1"}
 
 NUMERIC_FIELDS = [f.name for f in dataclasses.fields(Assumptions)
-                  if f.name != "company_name" and f.name not in SCHEDULE_FIELDS + COVENANT_FIELDS]
+                  if f.name != "company_name" and f.name not in SCHEDULE_FIELDS + COVENANT_FIELDS + FLAG_FIELDS]
 # Fields expressed as decimals; a value above 1 almost certainly means "4" was meant as 4%.
 PCT_FIELDS = {"revenue_growth", "ebitda_margin", "capex_pct_revenue", "da_pct_revenue",
               "nwc_pct_of_rev_growth", "senior_rate", "senior_mandatory_amort_pct", "sub_rate",
