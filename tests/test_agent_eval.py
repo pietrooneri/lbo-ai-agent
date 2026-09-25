@@ -165,3 +165,56 @@ def test_code_written_warning_text_counts_as_source():
     refs = ev._numbers_in({"guardrail_warnings": ["Entry EBITDA / interest only 1.83x"],
                            "rationale": "margin around 37.7%"}, strings=False)
     assert 1.83 in refs and 37.7 not in refs
+
+
+PLAN_CASE = {
+    "id": "t_plan", "tags": ["industrials", "it"],
+    "turns": ["Arredi, fatturato 400 milioni, margine 15%, piano al 18% in tre anni; e se arriva al 16%?"],
+    "expect": {"sector": ["industrials"], "provided": {},
+               "plan_shape": {"field": "ebitda_margin_by_year", "increasing": True},
+               "scenario_plan": [{"field": "ebitda_margin_by_year", "last": 0.16}],
+               "covenant_steps": [6.0, 5.5, 5.0]},
+}
+
+
+def plan_llm(description):
+    return proposal(plan={"ebitda_margin_by_year": [0.15, 0.165, 0.18], "source": "provided",
+                          "rationale": "management plan"},
+                    covenants={"max_net_leverage": 6.0, "min_interest_cover": 2.5, "step_down_per_year": 0.5,
+                               "source": "provided", "rationale": "term sheet"})
+
+
+def plan_script(scenario_plan):
+    return ScriptedClaude([
+        _message([_tool_use("t1", "generate_base_case", {"description": "x"})], "tool_use"),
+        _message([_tool_use("t2", "run_scenario", {"name": "partial", "rationale": "plan half delivered",
+                                                   "overrides": {}, "plan": scenario_plan})], "tool_use"),
+        _message([_tool_use("t3", "export_excel", {"scenario": "base"})], "tool_use"),
+        _message([{"type": "text", "text": "Il piano regge solo in parte, con il fatturato di 400 milioni."}], "end_turn"),
+    ])
+
+
+def test_plan_and_covenant_checks_pass_for_a_correct_agent(tmp_path):
+    args = _args(tmp_path)
+    (tmp_path / "cases.json").write_text(json.dumps([PLAN_CASE]))
+    rows = ev.run(args, client=plan_script({"ebitda_margin": [0.15, 0.155, 0.16]}).client(), llm=plan_llm)
+    g = rows[0]["grade"]
+    assert (g["plan_ok"], g["covenant_ok"], g["all_checks"]) == (1.0, 1.0, 1.0), rows[0]["explanation"]
+
+
+def test_plan_and_covenant_checks_fail_when_ignored(tmp_path):
+    args = _args(tmp_path)
+    (tmp_path / "cases.json").write_text(json.dumps([PLAN_CASE]))
+    rows = ev.run(args, client=plan_script({"ebitda_margin": [0.17]}).client(),
+                  llm=lambda d: proposal())                                   # flat plan, derived covenants
+    g = rows[0]["grade"]
+    assert g["plan_ok"] == 0.0 and g["covenant_ok"] == 0.0 and g["all_checks"] == 0.0
+    assert "FAIL base ebitda_margin_by_year" in rows[0]["explanation"]["plan_ok"]
+
+
+def test_new_cases_are_well_formed():
+    cases = json.load(open("evals/agent_cases.json"))
+    assert len(cases) == 15 and len({c["id"] for c in cases}) == 15
+    from sector_benchmarks import SECTORS
+    for c in cases:
+        assert set(c["expect"]["sector"]) <= set(SECTORS), c["id"]

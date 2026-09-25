@@ -79,6 +79,8 @@ class CovenantTerms(BaseModel):
     max_net_leverage: float = Field(description="Maximum net debt / EBITDA if the description states one, "
                                                 "else 0 (set from the base case with market headroom).")
     min_interest_cover: float = Field(description="Minimum EBITDA / interest if stated, else 0.")
+    step_down_per_year: float = Field(description="Yearly reduction of the leverage covenant if stated "
+                                                  "(e.g. 0.5 for 'steps down by 0.5x a year'), else 0.")
     source: Literal["provided", "estimated"]
     rationale: str
 
@@ -457,10 +459,17 @@ def derive_covenants(a: Assumptions, headroom: float = COVENANT_HEADROOM) -> Tup
 def _set_covenants(res: GenerationResult, terms: CovenantTerms) -> GenerationResult:
     a = res.assumptions
     if terms.source == "provided" and (terms.max_net_leverage or terms.min_interest_cover):
-        a = _dc.replace(a, max_net_leverage=terms.max_net_leverage, min_interest_cover=terms.min_interest_cover)
+        steps = None
+        if terms.max_net_leverage and terms.step_down_per_year > 0:
+            steps = tuple(max(terms.max_net_leverage - terms.step_down_per_year * i, 1.0)
+                          for i in range(a.hold_period_years))
+        a = _dc.replace(a, max_net_leverage=terms.max_net_leverage, max_net_leverage_by_year=steps,
+                        min_interest_cover=terms.min_interest_cover)
         for name in COVENANT_FIELDS:
             value = getattr(a, name)
             res.trace[name] = FieldTrace(value, "provided", terms.rationale, value)
+        if steps:
+            res.trace["max_net_leverage_by_year"] = FieldTrace(list(steps), "provided", terms.rationale, list(steps))
     else:
         steps, cover = derive_covenants(a)
         a = _dc.replace(a, max_net_leverage_by_year=steps, min_interest_cover=cover)

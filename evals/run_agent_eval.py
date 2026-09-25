@@ -43,7 +43,8 @@ CASES_FILE = ROOT / "evals" / "agent_cases.json"
 HARNESS_PATHS = ["evals/run_agent_eval.py", "evals/agent_cases.json", "lbo_agent.py",
                  "assumption_generator.py", "lbo_engine.py", "excel_export.py", "sector_benchmarks.py",
                  "data/sector_benchmarks.json"]
-CHECKS = ["sector_ok", "provided_ok", "tools_ok", "scenarios_ok", "guardrail_ok", "export_ok", "language_ok"]
+CHECKS = ["sector_ok", "provided_ok", "tools_ok", "scenarios_ok", "plan_ok", "covenant_ok", "guardrail_ok",
+          "export_ok", "language_ok"]
 # Text fields written by our code (not by the model): their figures count as tool output.
 CODE_TEXT_KEYS = {"guardrail_warnings", "guardrail_adjustments", "engine_warnings", "benchmark_notes",
                   "entry_terms", "note"}
@@ -238,6 +239,34 @@ def grade(case: dict, session: DealSession, calls: List[dict], answers: List[str
         why["scenarios_ok"] = "; ".join(f"{'OK' if ok else 'FAIL'} {name}" for name, ok in scen_checks)
     else:
         g["scenarios_ok"], why["scenarios_ok"] = None, "n/a"
+
+    plan_checks = []
+    if "plan_shape" in exp and base is not None:
+        want = exp["plan_shape"]
+        seq = getattr(base, want["field"]) or ()
+        ok = len(seq) >= 2 and (not want.get("increasing") or all(b >= a for a, b in zip(seq, seq[1:]))
+                                and seq[-1] > seq[0])
+        plan_checks.append((f"base {want['field']} = {list(seq)} (increasing profile expected)", ok))
+    for want in exp.get("scenario_plan", []):
+        ok = any((getattr(sc.assumptions, want["field"]) or ()) and
+                 _close(getattr(sc.assumptions, want["field"])[-1], want["last"], rel=1e-3) for sc in others)
+        plan_checks.append((f"scenario with {want['field']} ending at {want['last']}", ok))
+    if plan_checks:
+        g["plan_ok"] = float(all(ok for _, ok in plan_checks))
+        why["plan_ok"] = "; ".join(f"{'OK' if ok else 'FAIL'} {name}" for name, ok in plan_checks)
+    else:
+        g["plan_ok"], why["plan_ok"] = None, "n/a"
+
+    if "covenant_steps" in exp:
+        want = exp["covenant_steps"]
+        found = [sc.name for sc in session.scenarios.values()
+                 if [sc.assumptions.plan_value("max_net_leverage", t) for t in range(1, len(want) + 1)] == want]
+        tested = base is not None and base.has_covenants
+        g["covenant_ok"] = float(bool(found) and tested)
+        why["covenant_ok"] = (f"step-downs {want} in {found}" if found else f"no scenario with step-downs {want}") + \
+            ("" if tested else "; base case has no covenants")
+    else:
+        g["covenant_ok"], why["covenant_ok"] = None, "n/a"
 
     if exp.get("guardrail_warning"):
         g["guardrail_ok"] = float(bool(gen and gen.warnings))

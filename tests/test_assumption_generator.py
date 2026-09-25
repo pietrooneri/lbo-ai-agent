@@ -28,8 +28,8 @@ def proposal(provided=(), sector="industrials", plan=None, covenants=None, **ove
     return ProposedAssumptions(
         company_name="Project Test", sector=sector, sector_rationale="test", currency="EUR",
         key_risks=["cyclicality"], operating_plan={**FLAT_PLAN, **(plan or {})},
-        covenants=covenants or {"max_net_leverage": 0, "min_interest_cover": 0, "source": "estimated",
-                                "rationale": "not stated"},
+        covenants={"max_net_leverage": 0, "min_interest_cover": 0, "step_down_per_year": 0,
+                   "source": "estimated", "rationale": "not stated", **(covenants or {})},
         **{k: {"value": v, "source": "provided" if k in provided else "estimated", "rationale": "r"}
            for k, v in vals.items()},
     )
@@ -232,3 +232,11 @@ def test_stated_covenants_are_kept():
                                                "source": "provided", "rationale": "term sheet"}))
     a = res.assumptions
     assert (a.max_net_leverage, a.max_net_leverage_by_year, a.min_interest_cover) == (5.0, None, 2.5)
+
+
+def test_stated_step_downs_build_the_schedule():
+    res = apply_guardrails(proposal(covenants={"max_net_leverage": 6.0, "min_interest_cover": 2.5,
+                                               "step_down_per_year": 0.5, "source": "provided",
+                                               "rationale": "bank term sheet"}))
+    assert res.assumptions.max_net_leverage_by_year == (6.0, 5.5, 5.0, 4.5, 4.0)
+    assert res.trace["max_net_leverage_by_year"].source == "provided"
