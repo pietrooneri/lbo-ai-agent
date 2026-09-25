@@ -263,8 +263,11 @@ def _interest(A: Dict[str, str], balance: str, rate: str, circular: bool):
     workbook circular, so iterative calculation is enabled. circular=False writes the opening-balance
     formula only: a loop-free twin used by the test suite, whose evaluator cannot handle loops."""
     if circular:
-        return lambda c, p, R: (f"=IF({A['interest_on_average_balance']}=1,({p}{R[balance]}+{c}{R[balance]})/2,"
-                                f"{p}{R[balance]})*{A[rate]}")
+        # IFERROR is the circuit breaker: if an error ever enters the loop (e.g. on the first
+        # calculation after opening), the line falls back to the opening balance for that pass,
+        # the loop clears itself, and the next iteration returns to the average balance.
+        return lambda c, p, R: (f"=IFERROR(IF({A['interest_on_average_balance']}=1,({p}{R[balance]}+{c}{R[balance]})/2,"
+                                f"{p}{R[balance]}),{p}{R[balance]})*{A[rate]}")
     return lambda c, p, R: f"={p}{R[balance]}*{A[rate]}"
 
 
@@ -604,7 +607,8 @@ def _write_sensitivity(ws, R: Dict[str, int], top: int, n_years: int, last: str)
 CONVENTIONS = [
     "Interest: on opening balances by default (no circularity). The circularity switch on the Assumptions "
     "sheet moves it to average balances (opening + closing) / 2; the workbook has iterative calculation "
-    "enabled for that, and setting the switch back to 0 breaks the loop if the model ever shows errors.",
+    "enabled for that, and an IFERROR circuit breaker on each interest line keeps an error from getting "
+    "stuck in the loop (setting the switch to 0 also breaks it).",
     "Cash waterfall: FCF + opening surplus cash -> Term Loan mandatory amortization -> shortfall drawn on "
     "RCF / surplus repays RCF first, then sweeps the Term Loan -> remainder kept as cash.",
     "Subordinated Notes are bullet and non-call: repaid at exit out of the equity value.",

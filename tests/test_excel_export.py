@@ -204,7 +204,7 @@ def test_user_workbook_interest_formulas_carry_the_switch(tmp_path):
     switch = switch.replace("Assumptions!B", "Assumptions!$B$")
     for line, bal in (("int_senior", "tl_end"), ("int_sub", "sub_end"), ("int_rcf", "rcf_end")):
         f = user[f"E{R[line]}"].value
-        assert f.startswith(f"=IF({switch}=1,(D{R[bal]}+E{R[bal]})/2,D{R[bal]})*"), f
+        assert f.startswith(f"=IFERROR(IF({switch}=1,(D{R[bal]}+E{R[bal]})/2,D{R[bal]}),D{R[bal]})*"), f
         assert twin[f"E{R[line]}"].value == "=D{}*{}".format(R[bal], f.split(")*")[1])
     differing = [c.coordinate for row in user.iter_rows() for c in row
                  if c.value != twin[c.coordinate].value]
