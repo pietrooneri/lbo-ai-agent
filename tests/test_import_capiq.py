@@ -53,7 +53,7 @@ def test_company_export_is_recognised_and_normalised(tmp_path):
     assert first["capex_pct_revenue"] == pytest.approx(6 / 200)            # negative capex -> positive share
     assert first["da_pct_revenue"] == pytest.approx(7 / 200)
     assert first["total_leverage_x"] == 3
-    assert res["unmapped"] == {"Financials > Banks": 1}
+    assert res["unmapped"] == {}                                            # banks are skipped on purpose
     assert len(res["rows"]) == 6                                           # 'Odd Co' has nothing usable
 
 
@@ -81,3 +81,10 @@ def test_end_to_end_into_calibration(tmp_path):
 ])
 def test_industry_mapping(industry, sector):
     assert ic.sector_for(industry) == sector
+
+
+def test_currency_factor_converts_usd_columns_to_eur():
+    from import_capiq import currency_factor
+    assert currency_factor("Total Revenue [LTM] (€EURmm, Historical rate)") == 1.0
+    assert currency_factor("Depreciation & Amort. [LTM] ($USDmm, Historical rate)") < 1.0
+    assert currency_factor("EBITDA Margin % [LTM]") == 1.0

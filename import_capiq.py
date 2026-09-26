@@ -28,6 +28,35 @@ OUT_FIELDS = ["sector", "entry_ev_multiple", "ebitda_margin", "revenue_growth", 
 
 # Capital IQ / GICS-style industry names (lower case, matched as substrings, first hit wins).
 INDUSTRY_TO_SECTOR = [
+    # Out of scope for an LBO sector benchmark: skipped on purpose (listed first so they win).
+    ("real estate", None), ("reit", None), ("pharmaceuticals", None), ("biotechnology", None),
+    ("renewable electricity", None), ("electric utilities", None), ("gas utilities", None), ("banks", None),
+    ("insurance", None), ("asset management", None), ("oil and gas", None), ("oil & gas", None),
+    ("multi-sector holdings", None), ("specialized finance", None), ("consumer finance", None),
+    ("investment banking", None), ("mortgage", None), ("homebuilding", None), ("health care equipment", None),
+    ("life sciences tools", None), ("independent power", None), ("coal and consumable", None),
+    # GICS sub-industries as Capital IQ reports them, specific names before generic ones
+    ("food distributors", "consumer_retail"), ("health care distributors", "consumer_retail"),
+    ("consulting", "business_services"), ("support services", "business_services"),
+    ("office services", "business_services"), ("environmental", "business_services"),
+    ("security and alarm", "business_services"), ("human resource", "business_services"),
+    ("data processing", "business_services"), ("advertising", "business_services"),
+    ("publishing", "business_services"), ("education services", "education"),
+    ("restaurants", "leisure_fitness"), ("hotels", "leisure_fitness"), ("casinos", "leisure_fitness"),
+    ("leisure facilities", "leisure_fitness"), ("movies and entertainment", "leisure_fitness"),
+    ("health care services", "healthcare_services"), ("health care facilities", "healthcare_services"),
+    ("packaged foods", "food_beverage"), ("agricultural products", "food_beverage"), ("brewers", "food_beverage"),
+    ("distillers", "food_beverage"), ("soft drinks", "food_beverage"),
+    ("automotive parts", "industrials"), ("steel", "industrials"), ("aluminum", "industrials"),
+    ("household products", "consumer_brands_luxury"), ("household appliances", "consumer_brands_luxury"),
+    ("airport services", "logistics_transport"), ("commercial printing", "business_services"),
+    ("trucking", "logistics_transport"), ("railroads", "logistics_transport"), ("marine ports", "logistics_transport"),
+    ("footwear", "consumer_brands_luxury"), ("home furnishings", "consumer_brands_luxury"),
+    ("housewares", "consumer_brands_luxury"), ("personal care products", "consumer_brands_luxury"),
+    ("alternative carriers", "telecom_infra"), ("integrated telecommunication", "telecom_infra"),
+    ("construction machinery", "industrials"), ("heavy electrical", "industrials"),
+    ("electrical components", "industrials"), ("electronic components", "industrials"),
+    ("electronic manufacturing", "industrials"), ("industrial machinery", "industrials"),
     ("software", "software_saas"), ("internet services", "software_saas"),
     ("health care providers", "healthcare_services"), ("health care services", "healthcare_services"),
     ("health care facilities", "healthcare_services"),
@@ -68,6 +97,9 @@ COLUMNS = {
     "ev_ebitda": r"(implied )?(enterprise value|tev|ev)\s*/\s*(ltm )?ebitda",
 }
 MISSING = {"", "-", "--", "nm", "n/a", "na", "n.m.", "none"}
+# Capital IQ lets each column carry its own currency (e.g. D&A in $USDmm next to revenue in €EURmm).
+# Amounts are converted to EUR at an approximate average rate: the error is small next to a P25-P75 range.
+TO_EUR = {"eur": 1.0, "usd": 0.88, "gbp": 1.17, "chf": 1.05}
 
 
 def _num(v) -> Optional[float]:
@@ -91,6 +123,12 @@ def _num(v) -> Optional[float]:
 def _as_share(v: Optional[float]) -> Optional[float]:
     """Percent columns come as 12.5 or 0.125 or '12.5%': normalise to 0.125."""
     return None if v is None else (v / 100 if abs(v) > 1.5 else v)
+
+
+def currency_factor(header: str) -> float:
+    """EUR per unit of the column's currency, read from headers like '(€EURmm, Historical rate)'."""
+    m = re.search(r"\b(eur|usd|gbp|chf)", (header or "").lower())
+    return TO_EUR[m.group(1)] if m else 1.0
 
 
 def read_rows(path: str) -> List[List]:
@@ -126,9 +164,16 @@ def map_columns(header: List) -> Dict[str, int]:
     return found
 
 
+SKIP = "__skip__"
+
+
 def sector_for(industry: str) -> Optional[str]:
+    """Our sector for a Capital IQ industry; SKIP if deliberately out of scope; None if unknown."""
     text = (industry or "").lower()
-    return next((sector for key, sector in INDUSTRY_TO_SECTOR if key in text), None)
+    for key, sector in INDUSTRY_TO_SECTOR:
+        if key in text:
+            return sector or SKIP
+    return None
 
 
 def convert(path: str) -> Dict:
@@ -137,6 +182,7 @@ def convert(path: str) -> Dict:
     cols = map_columns(rows[h])
     if "industry" not in cols:
         raise ValueError(f"{path}: no industry column; headers are {rows[h]}")
+    fx = {k: currency_factor(str(rows[h][j])) for k, j in cols.items()}
     out, unmapped = [], {}
     for i, row in enumerate(rows[h + 1:], start=h + 2):
         get = lambda k: row[cols[k]] if k in cols and cols[k] < len(row) else None
@@ -144,10 +190,13 @@ def convert(path: str) -> Dict:
         if not industry:
             continue
         sector = sector_for(industry)
+        if sector == SKIP:
+            continue
         if not sector:
             unmapped[industry] = unmapped.get(industry, 0) + 1
             continue
         revenue = _num(get("revenue"))
+        revenue = revenue * fx["revenue"] if revenue is not None else None
         rec = {"sector": sector, "source_row": f"{Path(path).name}:{i}"}
         margin = _as_share(_num(get("ebitda_margin")))
         if margin is not None and 0 < margin < 1:
@@ -157,7 +206,10 @@ def convert(path: str) -> Dict:
             rec["revenue_growth"] = growth
         for key, field in (("capex", "capex_pct_revenue"), ("da", "da_pct_revenue"), ("nwc", "nwc_pct_of_rev_growth")):
             v = _num(get(key))
+            if key == "capex" and v == 0:                        # zero capex = not reported
+                v = None
             if v is not None and revenue and revenue > 0:
+                v *= fx[key]
                 share = abs(v) / revenue if key != "nwc" else v / revenue   # capex is often negative in exports
                 if -1 < share < 1:
                     rec[field] = share
