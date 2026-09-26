@@ -481,7 +481,12 @@ def main(argv=None):
         print(summary((Path(args.flow_dir) if args.flow_dir else FLOW_DIR) / args.variant))
         return
     if not os.environ.get("ANTHROPIC_API_KEY"):
-        sys.exit("ANTHROPIC_API_KEY is not set in this terminal: set it first, nothing was run.")
+        from app_logic import get_api_key            # the key saved by the desktop app (macOS Keychain)
+        key = get_api_key()
+        if not key:
+            sys.exit("No API key: save it in the app (Settings) or set ANTHROPIC_API_KEY. Nothing was run.")
+        os.environ["ANTHROPIC_API_KEY"] = key
+        print("Using the API key saved by the app (Keychain).")
     check_harness(args.approve_harness)
     run(args)
 
