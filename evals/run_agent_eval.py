@@ -22,6 +22,7 @@ Usage:
 """
 
 import argparse
+import os
 import concurrent.futures
 import hashlib
 import json
@@ -471,15 +472,18 @@ def main(argv=None):
                     help="Assumed cost of a case before any has been measured (USD)")
     ap.add_argument("--timeout-s", type=int, default=900)
     ap.add_argument("--approve-harness", action="store_true")
-    ap.add_argument("--summary", action="store_true", help="Print the results table (no API calls if all done)")
+    ap.add_argument("--summary", action="store_true", help="Only print the results table (never calls the API)")
     args = ap.parse_args(argv)
     if args.variant != "baseline" and not re.fullmatch(r"v\d+", args.variant):
         ap.error("variant must be 'baseline' or v<N>")
 
-    check_harness(args.approve_harness)
-    run(args)
     if args.summary:
         print(summary((Path(args.flow_dir) if args.flow_dir else FLOW_DIR) / args.variant))
+        return
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        sys.exit("ANTHROPIC_API_KEY is not set in this terminal: set it first, nothing was run.")
+    check_harness(args.approve_harness)
+    run(args)
 
 
 if __name__ == "__main__":
