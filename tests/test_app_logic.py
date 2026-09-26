@@ -1,6 +1,7 @@
 """App logic without the UI: form -> request, key handling, Italian texts, a full offline run."""
 
 import json
+from pathlib import Path
 
 import keyring
 import pytest
@@ -188,3 +189,29 @@ def test_covenant_column():
     assert L.covenant_text(None) == "—"
     assert L.covenant_text({"first_breach_year": 2, "lowest_headroom": -0.1}) == "violati nell'anno 2"
     assert L.covenant_text({"first_breach_year": None, "lowest_headroom": 0.284}, "en") == "met (lowest headroom 28%)"
+
+
+def test_reopened_project_lists_only_its_own_workbooks(tmp_path):
+    from test_deal_file import CountingLLM
+    from lbo_agent import DealSession
+    out = tmp_path / "out"
+    first = DealSession(output_dir=str(out), llm=CountingLLM())
+    first.generate_base_case("x")
+    first.export_excel("base")
+    path = first.save()
+    second = DealSession(output_dir=str(out), llm=CountingLLM())
+    second.generate_base_case("x")
+    second.export_excel("base")
+    second.save()
+    files = [Path(p).name for p in L.Analysis.open(path, out).excel_files]
+    assert files == ["Project_Test_base.xlsx"]
+
+
+def test_project_list_tells_versions_apart(tmp_path):
+    from test_deal_file import CountingLLM
+    from lbo_agent import DealSession
+    for _ in range(2):
+        s = DealSession(output_dir=str(tmp_path), llm=CountingLLM())
+        s.generate_base_case("x")
+        s.save()
+    assert sorted(p["company"] for p in L.list_projects(tmp_path)) == ["Project Test", "Project Test (v2)"]

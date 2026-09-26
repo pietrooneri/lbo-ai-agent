@@ -159,3 +159,28 @@ def test_projects_saved_before_fees_load_with_zero_fees(tmp_path):
     assert (a.transaction_fees_pct_ev, a.financing_fees_pct_debt, a.senior_oid_pct) == (0.0, 0.0, 0.0)
     loaded.run_scenario("with_fees", {"transaction_fees_pct_ev": 0.02}, "add fees")
     assert loaded.export_excel("with_fees")["path"].endswith(".xlsx")
+
+
+def test_new_analysis_of_same_company_does_not_overwrite(deal, tmp_path):
+    out = tmp_path / "out"
+    first = deal.save()
+    deal.export_excel("base")
+    again = DealSession(output_dir=str(out), llm=CountingLLM())
+    again.generate_base_case("Valvole, fatturato 400m")
+    again.export_excel("base")
+    second = again.save()
+    assert second == str(out / "Project_Test_v2_deal.json") and first != second
+    assert (out / "Project_Test_base.xlsx").exists() and (out / "Project_Test_v2_base.xlsx").exists()
+    assert again.save() == second                                   # later saves stay on its own file
+    third = DealSession(output_dir=str(out), llm=CountingLLM())
+    third.generate_base_case("Valvole, fatturato 400m")
+    assert third.save().endswith("Project_Test_v3_deal.json")
+
+
+def test_reopened_project_keeps_saving_to_its_file(deal, tmp_path):
+    out = tmp_path / "out"
+    path = deal.save()
+    reopened = DealSession.load(path, str(out), llm=no_llm)
+    reopened.run_scenario("extra", {"exit_ev_multiple": 7.0}, "follow-up question")
+    assert reopened.save() == path
+    assert sorted(p.name for p in out.glob("*_deal.json")) == ["Project_Test_deal.json"]

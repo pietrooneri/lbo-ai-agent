@@ -123,6 +123,7 @@ class DealSession:
         self.usage_log: List[dict] = []          # one record per Claude call (agent turns + generator)
         self.history: List[dict] = []            # {question, answer, at}: what was asked and answered
         self.usage_tracked = True                # False for projects saved before usage was recorded
+        self._file_stem: Optional[str] = None    # fixed once chosen: this project's file names
 
     def record_usage(self, model: str, usage) -> None:
         self.usage_log.append({
@@ -138,6 +139,20 @@ class DealSession:
     def company_stem(self) -> str:
         name = self.generation.assumptions.company_name if self.generation else "lbo"
         return re.sub(r"[^A-Za-z0-9]+", "_", name)[:40].strip("_") or "lbo"
+
+    def file_stem(self) -> str:
+        """Name shared by this project's deal file and workbooks. A new analysis of a company that
+        already has a project gets a free name (<company>_v2, _v3...) instead of overwriting it; a
+        reopened project keeps its own."""
+        if self._file_stem:
+            return self._file_stem
+        base = self.company_stem()
+        stem, n = base, 2
+        while (self.output_dir / f"{stem}_deal.json").exists():
+            stem, n = f"{base}_v{n}", n + 1
+        if self.generation:
+            self._file_stem = stem
+        return stem
 
     def to_dict(self) -> dict:
         if not self.generation:
@@ -160,7 +175,7 @@ class DealSession:
 
     def save(self, path: Optional[str] = None) -> str:
         """Write the deal file (default: <output_dir>/<company>_deal.json) and return its path."""
-        target = Path(path) if path else self.output_dir / f"{self.company_stem()}_deal.json"
+        target = Path(path) if path else self.output_dir / f"{self.file_stem()}_deal.json"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(self.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
         return str(target)
@@ -188,6 +203,8 @@ class DealSession:
         session.history = list(data.get("history", []))
         session.usage_log = list(data.get("usage", []))
         session.usage_tracked = "usage" in data
+        if Path(path).name.endswith("_deal.json") and Path(path).parent.resolve() == session.output_dir.resolve():
+            session._file_stem = Path(path).name[:-len("_deal.json")]
         for sc in saved_scenarios:
             if sc["based_on"] not in session.scenarios:
                 raise ValueError(f"Scenario {sc['name']!r} is based on unknown {sc['based_on']!r}")
@@ -445,7 +462,7 @@ class DealSession:
         s = self._scenario(scenario)
         stem = re.sub(r"[^A-Za-z0-9_\-]+", "_", Path(filename).stem if filename else "")[:60].strip("_")
         if not stem:
-            stem = f"{self.company_stem()}_{scenario}"
+            stem = f"{self.file_stem()}_{scenario}"
         self.output_dir.mkdir(parents=True, exist_ok=True)
         path = self.output_dir / f"{stem}.xlsx"     # always inside output_dir, always .xlsx
         export_to_excel(s.assumptions, str(path), self._audit_for(s))

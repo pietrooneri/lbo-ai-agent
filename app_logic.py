@@ -583,6 +583,12 @@ def project_cost(data: dict, lang: str = "it") -> str:
 # Saved projects
 # ---------------------------------------------------------------------------
 
+def _version_suffix(path: Path) -> str:
+    """' (v2)' for a second analysis of the same company, so the list tells them apart."""
+    m = re.search(r"_v(\d+)_deal\.json$", path.name)
+    return f" (v{m.group(1)})" if m else ""
+
+
 def list_projects(output_dir: Path = OUTPUT_DIR, lang: str = "it") -> List[dict]:
     projects = []
     for path in sorted(Path(output_dir).glob("*_deal.json"), key=lambda p: p.stat().st_mtime, reverse=True):
@@ -592,7 +598,7 @@ def list_projects(output_dir: Path = OUTPUT_DIR, lang: str = "it") -> List[dict]
         except (OSError, ValueError, KeyError):
             continue
         projects.append({
-            "path": str(path), "company": base.get("company_name", path.stem),
+            "path": str(path), "company": base.get("company_name", path.stem) + _version_suffix(path),
             "sector": base.get("sector_label", base.get("sector", "")),
             "saved": time.strftime("%d/%m/%Y %H:%M", time.localtime(path.stat().st_mtime)),
             "scenarios": len(data.get("scenarios", [])) + 1,
@@ -680,9 +686,11 @@ class Analysis:
     def excel_files(self) -> List[str]:
         paths = list(self.session.exports)
         # Reopened project: the exports list is empty, but the workbooks are still on disk.
-        stem = self.session.company_stem() if self.session.generation else None
+        stem = self.session.file_stem() if self.session.generation else None
         if stem:
-            paths += [str(p) for p in sorted(self.session.output_dir.glob(f"{stem}_*.xlsx"))]
+            other_version = re.compile(rf"{re.escape(stem)}_v\d+_")    # a later analysis of the same company
+            paths += [str(p) for p in sorted(self.session.output_dir.glob(f"{stem}_*.xlsx"))
+                      if not other_version.match(p.name)]
         return list(dict.fromkeys(p for p in paths if Path(p).exists()))
 
 
