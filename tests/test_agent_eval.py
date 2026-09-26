@@ -218,3 +218,21 @@ def test_new_cases_are_well_formed():
     from sector_benchmarks import SECTORS
     for c in cases:
         assert set(c["expect"]["sector"]) <= set(SECTORS), c["id"]
+
+
+@pytest.mark.parametrize("last, passes", [(0.12, True), (0.13, False)])
+def test_phased_margin_squeeze_counts_for_its_end_level(tmp_path, last, passes):
+    """'Margins compress by 200bps after we buy it' can be run flat or phased over the hold:
+    a plan that ends at the target margin satisfies the expected scenario."""
+    case = {**CASE, "expect": {"sector": ["industrials"],
+                               "scenario_overrides": [{"ebitda_margin": 0.12, "reprice_entry": False}]}}
+    script = ScriptedClaude([
+        _message([_tool_use("t1", "generate_base_case", {"description": "x"})], "tool_use"),
+        _message([_tool_use("t2", "run_scenario", {"name": "squeeze", "rationale": "x", "overrides": {},
+                                                   "plan": {"ebitda_margin": [0.14, 0.13, last]}})], "tool_use"),
+        _message([{"type": "text", "text": "ok"}], "end_turn"),
+    ])
+    args = _args(tmp_path)
+    (tmp_path / "cases.json").write_text(json.dumps([case]))
+    row = ev.run(args, client=script.client(), llm=fake_llm)[0]
+    assert row["grade"]["scenarios_ok"] == float(passes), row["explanation"]["scenarios_ok"]

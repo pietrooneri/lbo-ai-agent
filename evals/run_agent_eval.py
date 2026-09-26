@@ -217,9 +217,15 @@ def grade(case: dict, session: DealSession, calls: List[dict], answers: List[str
 
     others = [sc for n, sc in session.scenarios.items() if n != "base"]
     scen_checks = []
+    def settled(a, field):
+        """A driver's steady-state value: the last year of its plan if it has one (a margin squeeze
+        phased in over the hold ends at the same level as a flat one)."""
+        plan = getattr(a, f"{field}_by_year", None)
+        return plan[-1] if plan else getattr(a, field)
+
     for want in exp.get("scenario_overrides", []):
         fields = {k: v for k, v in want.items() if k != "reprice_entry"}
-        ok = any(all(_close(getattr(sc.assumptions, k), v) for k, v in fields.items())
+        ok = any(all(_close(settled(sc.assumptions, k), v) for k, v in fields.items())
                  and (want.get("reprice_entry") is not False or _close(sc.assumptions.entry_ebitda, base.entry_ebitda))
                  for sc in others) if base else False
         scen_checks.append((f"scenario with {want}", ok))
