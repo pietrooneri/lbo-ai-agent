@@ -43,9 +43,18 @@ Export up to the row limit (e.g. the largest 2,000–5,000 companies by revenue)
 ## Then
 
 ```bash
-uv run python import_capiq.py data/capiq/companies.xlsx data/capiq/deals.xlsx
-uv run python calibrate_benchmarks.py --csv data/capiq/comps.csv
+uv run python import_capiq.py "data/capiq/Company Screening Report.xls" data/capiq/deals.xls
+uv run python calibrate_benchmarks.py --capiq data/capiq/comps.csv          # compare
+uv run python calibrate_benchmarks.py --capiq data/capiq/comps.csv --write  # apply
 ```
+
+Pick the **"Total Revenue"** data item for the revenue filter (not "Other Revenues, Total").
+Columns in another currency (e.g. D&A in $USDmm) are converted to EUR by the importer.
+
+What was applied (Sep 2026): only the EBITDA margin floors, lowered to the P25 of the
+sponsor-backed companies in 7 sectors with 40+ observations (software and luxury excluded).
+Growth, leverage, D&A, capex, NWC and deal multiples were not applied; the reasons are in
+`CAPIQ_NOT_APPLIED` in `calibrate_benchmarks.py` and in `data/sector_benchmarks.json`.
 
 The first command reports which columns it recognised, industries it could not map,
 and how many observations each sector has (at least 5 per metric are needed). The

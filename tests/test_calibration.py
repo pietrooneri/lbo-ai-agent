@@ -1,6 +1,7 @@
 """Calibrated benchmark ranges: the saved file, its loader, and the selection rules."""
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -19,23 +20,39 @@ def calibrated():
 
 @needs_raw_data
 def test_saved_file_matches_a_fresh_calibration():
-    """data/sector_benchmarks.json is exactly what the script produces from the raw files."""
-    assert json.loads(SAVED.read_text())["sectors"] == json.loads(json.dumps(cb.from_damodaran()))
+    """data/sector_benchmarks.json is exactly what the script produces from the raw files
+    (Damodaran, plus the Capital IQ margin floors when the git-ignored comps file is present)."""
+    saved = json.loads(SAVED.read_text())["sectors"]
+    fresh = cb.from_damodaran()
+    capiq = Path(cb.__file__).parent / "data" / "capiq" / "comps.csv"
+    if capiq.exists():
+        fresh = cb.merge(fresh, cb.capiq_margin_floors(str(capiq), fresh))
+        assert saved == json.loads(json.dumps(fresh))
+    else:                                     # without the licensed data: everything but the floors
+        for key, entry in json.loads(json.dumps(fresh)).items():
+            for field, rng in entry["ranges"].items():
+                if not (field == "ebitda_margin" and "Capital IQ" in saved[key]["source"]):
+                    assert saved[key]["ranges"][field] == rng, (key, field)
 
 
 def test_only_approved_fields_change(calibrated):
-    sectors, _ = calibrated
+    sectors, sources = calibrated
     for key, hand in HAND_SET.items():
         applied = set(cb.APPLY.get(key, []))
         for field in ("entry_ev_multiple", "ebitda_margin", "revenue_growth", "capex_pct_revenue",
                       "da_pct_revenue", "nwc_pct_of_rev_growth", "total_leverage_x"):
             if field not in applied:
-                assert getattr(sectors[key], field) == getattr(hand, field), (key, field)
+                now, before = getattr(sectors[key], field), getattr(hand, field)
+                if field == "ebitda_margin" and "Capital IQ" in sources.get(key, ""):
+                    assert now[0] < before[0] and now[1] == before[1], key    # floor lowered only
+                else:
+                    assert now == before, (key, field)
 
 
 def test_calibrated_values_are_sane(calibrated):
     sectors, sources = calibrated
-    assert sectors["industrials"].ebitda_margin == (0.10, 0.15)
+    assert sectors["industrials"].ebitda_margin == (0.075, 0.15)             # Capital IQ floor
+    assert sectors["consumer_brands_luxury"].ebitda_margin[0] >= 0.10        # excluded from the floors
     assert sectors["software_saas"] == HAND_SET["software_saas"]           # rejected: listed large caps
     assert sectors["chemicals"].ebitda_margin == HAND_SET["chemicals"].ebitda_margin   # cycle trough
     for key, s in sectors.items():
@@ -78,3 +95,16 @@ def test_bad_benchmark_file_is_rejected(tmp_path, content, message):
     path.write_text(json.dumps(content))
     with pytest.raises(ValueError, match=message):
         load_overrides(path, HAND_SET)
+
+
+def test_capiq_margin_floors_only_lower_the_floor(tmp_path):
+    from calibrate_benchmarks import capiq_margin_floors
+    p = tmp_path / "comps.csv"
+    rows = ["sector,ebitda_margin"] + [f"industrials,{0.04 + i / 1000}" for i in range(50)] \
+        + [f"software_saas,{0.05 + i / 1000}" for i in range(50)] + [f"chemicals,0.03" for _ in range(10)]
+    p.write_text("\n".join(rows))
+    out = capiq_margin_floors(str(p), {"industrials": {"ranges": {"ebitda_margin": (0.10, 0.15)}}})
+    lo, hi = out["industrials"]["ranges"]["ebitda_margin"]
+    assert lo < 0.10 and hi == 0.15                     # floor lowered, cap kept
+    assert "software_saas" not in out                   # excluded: sample not representative
+    assert "chemicals" not in out                       # too few companies

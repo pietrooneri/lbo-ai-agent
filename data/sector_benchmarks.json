@@ -3,7 +3,7 @@
     "industrials": {
       "ranges": {
         "ebitda_margin": [
-          0.1,
+          0.075,
           0.15
         ],
         "capex_pct_revenue": [
@@ -19,7 +19,7 @@
           0.2
         ]
       },
-      "source": "Damodaran Online, Europe industry datasets, updated 9 Jan 2026 - pages.stern.nyu.edu/~adamodar; 5 industries (598 listed firms): Machinery, Electrical Equipment, Auto Parts, Packaging & Container, Electronics (General)",
+      "source": "S&P Capital IQ company screen, Sep 2026 (Warwick academic access; raw data not redistributed); floor = P25 of 262 companies, upper bound kept (for ebitda_margin); otherwise Damodaran Online, Europe industry datasets, updated 9 Jan 2026 - pages.stern.nyu.edu/~adamodar; 5 industries (598 listed firms): Machinery, Electrical Equipment, Auto Parts, Packaging & Container, Electronics (General)",
       "method": "P25-P75 across mapped industries, min widths {'entry_ev_multiple': 2.0, 'ebitda_margin': 0.05, 'revenue_growth': 0.03, 'capex_pct_revenue': 0.015, 'da_pct_revenue': 0.015, 'nwc_pct_of_rev_growth': 0.1}"
     },
     "healthcare_services": {
@@ -31,9 +31,13 @@
         "nwc_pct_of_rev_growth": [
           -0.01,
           0.09
+        ],
+        "ebitda_margin": [
+          0.075,
+          0.22
         ]
       },
-      "source": "Damodaran Online, Europe industry datasets, updated 9 Jan 2026 - pages.stern.nyu.edu/~adamodar; 2 industries (76 listed firms): Healthcare Support Services, Hospitals/Healthcare Facilities",
+      "source": "S&P Capital IQ company screen, Sep 2026 (Warwick academic access; raw data not redistributed); floor = P25 of 45 companies, upper bound kept (for ebitda_margin); otherwise Damodaran Online, Europe industry datasets, updated 9 Jan 2026 - pages.stern.nyu.edu/~adamodar; 2 industries (76 listed firms): Healthcare Support Services, Hospitals/Healthcare Facilities",
       "method": "P25-P75 across mapped industries, min widths {'entry_ev_multiple': 2.0, 'ebitda_margin': 0.05, 'revenue_growth': 0.03, 'capex_pct_revenue': 0.015, 'da_pct_revenue': 0.015, 'nwc_pct_of_rev_growth': 0.1}",
       "not_applied": "margin/D&A: listed hospitals are not clinic chains; IFRS 16"
     },
@@ -46,9 +50,13 @@
         "nwc_pct_of_rev_growth": [
           0.02,
           0.12
+        ],
+        "ebitda_margin": [
+          0.055,
+          0.25
         ]
       },
-      "source": "Damodaran Online, Europe industry datasets, updated 9 Jan 2026 - pages.stern.nyu.edu/~adamodar; 6 industries (543 listed firms): Business & Consumer Services, Computer Services, Information Services, Environmental & Waste Services, Office Equipment & Services, Advertising",
+      "source": "S&P Capital IQ company screen, Sep 2026 (Warwick academic access; raw data not redistributed); floor = P25 of 289 companies, upper bound kept (for ebitda_margin); otherwise Damodaran Online, Europe industry datasets, updated 9 Jan 2026 - pages.stern.nyu.edu/~adamodar; 6 industries (543 listed firms): Business & Consumer Services, Computer Services, Information Services, Environmental & Waste Services, Office Equipment & Services, Advertising",
       "method": "P25-P75 across mapped industries, min widths {'entry_ev_multiple': 2.0, 'ebitda_margin': 0.05, 'revenue_growth': 0.03, 'capex_pct_revenue': 0.015, 'da_pct_revenue': 0.015, 'nwc_pct_of_rev_growth': 0.1}",
       "not_applied": "margin: listed mix includes low-margin staffing/outsourcing (flagged a normal 14% IT services margin); D&A: IFRS 16 and acquired intangibles put it above the capex range"
     },
@@ -57,9 +65,13 @@
         "nwc_pct_of_rev_growth": [
           -0.04,
           0.06
+        ],
+        "ebitda_margin": [
+          0.04,
+          0.16
         ]
       },
-      "source": "Damodaran Online, Europe industry datasets, updated 9 Jan 2026 - pages.stern.nyu.edu/~adamodar; 6 industries (351 listed firms): Retail (General), Retail (Special Lines), Retail (Grocery and Food), Retail (Distributors), Retail (Building Supply), Restaurant/Dining",
+      "source": "S&P Capital IQ company screen, Sep 2026 (Warwick academic access; raw data not redistributed); floor = P25 of 172 companies, upper bound kept (for ebitda_margin); otherwise Damodaran Online, Europe industry datasets, updated 9 Jan 2026 - pages.stern.nyu.edu/~adamodar; 6 industries (351 listed firms): Retail (General), Retail (Special Lines), Retail (Grocery and Food), Retail (Distributors), Retail (Building Supply), Restaurant/Dining",
       "method": "P25-P75 across mapped industries, min widths {'entry_ev_multiple': 2.0, 'ebitda_margin': 0.05, 'revenue_growth': 0.03, 'capex_pct_revenue': 0.015, 'da_pct_revenue': 0.015, 'nwc_pct_of_rev_growth': 0.1}",
       "not_applied": "capex/D&A: listed D&A includes IFRS 16 right-of-use depreciation; margin: the listed mix is dragged down by grocery (~5%) and clamped a 12% specialty retailer and an 18% gym chain in real runs"
     },
@@ -88,7 +100,7 @@
     "food_beverage": {
       "ranges": {
         "ebitda_margin": [
-          0.125,
+          0.05,
           0.19
         ],
         "capex_pct_revenue": [
@@ -100,7 +112,7 @@
           0.045
         ]
       },
-      "source": "Damodaran Online, Europe industry datasets, updated 9 Jan 2026 - pages.stern.nyu.edu/~adamodar; 3 industries (239 listed firms): Food Processing, Beverage (Alcoholic), Beverage (Soft)",
+      "source": "S&P Capital IQ company screen, Sep 2026 (Warwick academic access; raw data not redistributed); floor = P25 of 136 companies, upper bound kept (for ebitda_margin); otherwise Damodaran Online, Europe industry datasets, updated 9 Jan 2026 - pages.stern.nyu.edu/~adamodar; 3 industries (239 listed firms): Food Processing, Beverage (Alcoholic), Beverage (Soft)",
       "method": "P25-P75 across mapped industries, min widths {'entry_ev_multiple': 2.0, 'ebitda_margin': 0.05, 'revenue_growth': 0.03, 'capex_pct_revenue': 0.015, 'da_pct_revenue': 0.015, 'nwc_pct_of_rev_growth': 0.1}",
       "not_applied": "NWC: soft drinks run negative working capital; a producer with inventory and export (e.g. pasta, ~18%) would be clamped well below its real cash absorption"
     },
@@ -145,7 +157,7 @@
     "building_materials": {
       "ranges": {
         "ebitda_margin": [
-          0.095,
+          0.055,
           0.145
         ],
         "capex_pct_revenue": [
@@ -161,7 +173,7 @@
           0.15
         ]
       },
-      "source": "Damodaran Online, Europe industry datasets, updated 9 Jan 2026 - pages.stern.nyu.edu/~adamodar; 3 industries (363 listed firms): Building Materials, Construction Supplies, Engineering/Construction",
+      "source": "S&P Capital IQ company screen, Sep 2026 (Warwick academic access; raw data not redistributed); floor = P25 of 140 companies, upper bound kept (for ebitda_margin); otherwise Damodaran Online, Europe industry datasets, updated 9 Jan 2026 - pages.stern.nyu.edu/~adamodar; 3 industries (363 listed firms): Building Materials, Construction Supplies, Engineering/Construction",
       "method": "P25-P75 across mapped industries, min widths {'entry_ev_multiple': 2.0, 'ebitda_margin': 0.05, 'revenue_growth': 0.03, 'capex_pct_revenue': 0.015, 'da_pct_revenue': 0.015, 'nwc_pct_of_rev_growth': 0.1}"
     },
     "telecom_infra": {
@@ -178,6 +190,16 @@
       "source": "Damodaran Online, Europe industry datasets, updated 9 Jan 2026 - pages.stern.nyu.edu/~adamodar; 2 industries (73 listed firms): Telecom. Services, Telecom (Wireless)",
       "method": "P25-P75 across mapped industries, min widths {'entry_ev_multiple': 2.0, 'ebitda_margin': 0.05, 'revenue_growth': 0.03, 'capex_pct_revenue': 0.015, 'da_pct_revenue': 0.015, 'nwc_pct_of_rev_growth': 0.1}",
       "not_applied": "margin: listed telcos are not digital infrastructure (towers, fibre); D&A: above the capex range (spectrum amortisation, IFRS 16), would flag every consistent estimate"
+    },
+    "leisure_fitness": {
+      "ranges": {
+        "ebitda_margin": [
+          0.06,
+          0.3
+        ]
+      },
+      "source": "S&P Capital IQ company screen, Sep 2026 (Warwick academic access; raw data not redistributed); floor = P25 of 132 companies, upper bound kept (for ebitda_margin)",
+      "method": ""
     }
   },
   "kept_hand_set": {
@@ -189,5 +211,16 @@
     "entry_ev_multiple": "listed multiples not representative; hand-set ranges checked against Argos Index mid-market Q1 2026 (published 20 May 2026): median EV/EBITDA paid by investment funds 10.0x, eurozone unlisted SMEs - argos.fund",
     "revenue_growth": "only large-cap analyst consensus available",
     "total_leverage_x": "no public sector data; LCD ~4.6-5.3x overall"
+  },
+  "capiq_not_applied": {
+    "revenue_growth": "3-year CAGR 2022-25 of companies already sponsor-owned: includes inflation and buy-and-build acquisitions (P25-P75 ~7-20%), not organic forward growth",
+    "total_leverage_x": "current net debt/EBITDA of portfolio companies after years of deleveraging, often without holdco debt (~1-4x): not leverage at entry",
+    "da_pct_revenue / capex_pct_revenue": "implausible values (retail D&A 0.2-1.8%): patchy coverage",
+    "nwc_pct_of_rev_growth": "fewer than 100 observations in total",
+    "entry_ev_multiple": "64 deals, 1-19 per sector with wide dispersion; pooled median 10.5x (P25 7.4x, P75 15.7x) confirms the Argos 10.0x check"
+  },
+  "capiq_margin_excluded": {
+    "software_saas": "sample mixes IT services and loss-making growth companies with PE-owned SaaS",
+    "consumer_brands_luxury": "sample is mostly generic apparel and household products, not brands"
   }
 }

@@ -20,11 +20,17 @@ What Damodaran is used for, and what not (checked on the data, see comparison())
   - Leverage: no public sector breakdown (LCD reports ~4.6-5.3x for European LBOs overall).
 These stay as set in sector_benchmarks.py unless your CSV provides them.
 
+  3. Capital IQ (--capiq data/capiq/comps.csv, built by import_capiq.py): ~1,800 European
+     sponsor-backed private companies (EUR 50m-1bn revenue) and ~60 PE deals. Used only to
+     LOWER the EBITDA margin floor to the P25 of mid-market private companies (reviewed with the
+     user on 2026-09-26); upper bounds stay. Not used, and why: see CAPIQ_NOT_APPLIED.
+
 Usage:
     uv run python calibrate_benchmarks.py --download      # fetch the raw Damodaran files (not redistributed)
     uv run python calibrate_benchmarks.py                 # print old vs proposed, change nothing
     uv run python calibrate_benchmarks.py --write         # save data/sector_benchmarks.json
     uv run python calibrate_benchmarks.py --csv comps.csv --write
+    uv run python calibrate_benchmarks.py --capiq data/capiq/comps.csv --write   # current setup
 """
 
 import argparse
@@ -105,6 +111,25 @@ NOT_APPLIED_BECAUSE = {
     "education": "all: one industry of 18 listed firms, NWC sign opposite to sector economics",
     "other": "all: must stay wide by design (unclassified companies)",
 }
+
+CAPIQ_SOURCE = "S&P Capital IQ company screen, Sep 2026 (Warwick academic access; raw data not redistributed)"
+CAPIQ_MIN_OBS = 40
+# Sectors whose Capital IQ sample does not match the sector's LBO targets.
+CAPIQ_MARGIN_EXCLUDED = {
+    "software_saas": "sample mixes IT services and loss-making growth companies with PE-owned SaaS",
+    "consumer_brands_luxury": "sample is mostly generic apparel and household products, not brands",
+}
+CAPIQ_NOT_APPLIED = {
+    "revenue_growth": "3-year CAGR 2022-25 of companies already sponsor-owned: includes inflation and "
+                      "buy-and-build acquisitions (P25-P75 ~7-20%), not organic forward growth",
+    "total_leverage_x": "current net debt/EBITDA of portfolio companies after years of deleveraging, often "
+                        "without holdco debt (~1-4x): not leverage at entry",
+    "da_pct_revenue / capex_pct_revenue": "implausible values (retail D&A 0.2-1.8%): patchy coverage",
+    "nwc_pct_of_rev_growth": "fewer than 100 observations in total",
+    "entry_ev_multiple": "64 deals, 1-19 per sector with wide dispersion; pooled median 10.5x (P25 7.4x, "
+                         "P75 15.7x) confirms the Argos 10.0x check",
+}
+
 
 # A range built from 1-2 industries (or tightly clustered ones) would be too narrow to use as a
 # guardrail: never narrower than this, widened symmetrically around the data centre.
@@ -242,12 +267,30 @@ def from_csv(path: str, lo_q: float = 25, hi_q: float = 75, min_obs: int = 5) ->
     return result
 
 
+def capiq_margin_floors(path: str, current: Dict[str, dict], lo_q: float = 25) -> Dict[str, dict]:
+    """Lower each sector's EBITDA margin floor to the Capital IQ P25 where there are enough
+    companies; the upper bound (from Damodaran or hand-set) is kept."""
+    rows = list(csv.DictReader(open(path, encoding="utf-8")))
+    out = {}
+    for sector in SECTORS:
+        values = [float(r["ebitda_margin"]) for r in rows if r["sector"] == sector and r.get("ebitda_margin", "").strip()]
+        if len(values) < CAPIQ_MIN_OBS or sector in CAPIQ_MARGIN_EXCLUDED:
+            continue
+        lo_now, hi_now = current.get(sector, {}).get("ranges", {}).get("ebitda_margin", SECTORS[sector].ebitda_margin)
+        p25 = round(_percentile(values, lo_q) / ROUND_TO["ebitda_margin"]) * ROUND_TO["ebitda_margin"]
+        if p25 < lo_now:
+            out[sector] = {"ranges": {"ebitda_margin": (round(p25, 4), hi_now)},
+                           "source": f"{CAPIQ_SOURCE}; floor = P{lo_q:g} of {len(values)} companies, "
+                                     f"upper bound kept"}
+    return out
+
+
 def merge(base: Dict[str, dict], override: Dict[str, dict]) -> Dict[str, dict]:
     out = {k: {**v, "ranges": dict(v["ranges"])} for k, v in base.items()}
     for sector, v in override.items():
         entry = out.setdefault(sector, {"ranges": {}, "source": "", "method": ""})
         entry["ranges"].update(v["ranges"])
-        entry["source"] = f"{v['source']} (for {', '.join(v['ranges'])}); otherwise {entry['source']}"
+        entry["source"] = f"{v['source']} (for {', '.join(v['ranges'])})" + (f"; otherwise {entry['source']}" if entry["source"] else "")
     return out
 
 
@@ -266,6 +309,7 @@ def comparison(proposed: Dict[str, dict]) -> str:
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Calibrate sector benchmark ranges from data.")
     ap.add_argument("--csv", help="Your comparables CSV (overrides Damodaran where it has enough rows)")
+    ap.add_argument("--capiq", help="comps.csv from import_capiq.py: lowers EBITDA margin floors only")
     ap.add_argument("--low", type=float, default=25)
     ap.add_argument("--high", type=float, default=75)
     ap.add_argument("--download", action="store_true", help="Download the raw Damodaran Europe files first")
@@ -279,6 +323,8 @@ def main(argv=None):
     proposed = from_damodaran(args.low, args.high)
     if args.csv:
         proposed = merge(proposed, from_csv(args.csv, args.low, args.high))
+    if args.capiq:
+        proposed = merge(proposed, capiq_margin_floors(args.capiq, proposed, args.low))
     print(comparison(proposed))
     if args.write:
         kept = {k: v for k, v in NOT_APPLIED_BECAUSE.items() if k not in proposed}
@@ -287,7 +333,9 @@ def main(argv=None):
                                           "entry_ev_multiple": "listed multiples not representative; hand-set "
                                                                "ranges checked against " + ARGOS_SOURCE,
                                           "revenue_growth": "only large-cap analyst consensus available",
-                                          "total_leverage_x": "no public sector data; LCD ~4.6-5.3x overall"}},
+                                          "total_leverage_x": "no public sector data; LCD ~4.6-5.3x overall"},
+                                      **({"capiq_not_applied": CAPIQ_NOT_APPLIED,
+                                          "capiq_margin_excluded": CAPIQ_MARGIN_EXCLUDED} if args.capiq else {})},
                                      indent=2, ensure_ascii=False))
         print(f"\nSaved {OUTPUT}")
 
