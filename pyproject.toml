@@ -14,7 +14,9 @@ dependencies = [
 [dependency-groups]
 dev = [
     "numpy-financial>=1.0.0",
+    "pillow>=12.3.0",
     "pycel>=1.0b30",
+    "pyinstaller>=6.22.3",
     "pytest>=9.1.1",
     "xlrd>=2.0.2",
 ]

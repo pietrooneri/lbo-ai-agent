@@ -21,3 +21,5 @@ data/damodaran_2026_01/
 # Capital IQ exports are licensed data: only the README is published
 data/capiq/*
 !data/capiq/README.md
+packaging/build/
+packaging/dist/

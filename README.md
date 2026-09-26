@@ -136,7 +136,8 @@ uv run python lbo_agent.py --load output/<company>_deal.json --chat   # reopen w
 Desktop app (macOS):
 
 ```bash
-uv run python app.py
+uv run python app.py                  # from source
+packaging/build_app.sh --install      # or build a standalone "LBO Agent.app" (see packaging/README.md)
 ```
 
 Each analysis costs about $0.25–0.35 in API usage and takes 1–2 minutes. Example outputs are in [`examples/`](examples/): a live Excel model for the base case and the downside, and the saved deal file.

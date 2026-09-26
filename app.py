@@ -8,12 +8,22 @@ Italian or English, and the API key kept in the Keychain.
 
     uv run python app.py              # desktop window
     uv run python app.py --browser    # same app in the browser (development)
+    packaging/build_app.sh            # standalone "LBO Agent.app" (see packaging/README.md)
 """
 
 import argparse
+import multiprocessing
 import os
 import subprocess
+import sys
 import time
+
+import faulthandler
+import signal
+
+if sys.stdout is None or sys.stderr is None:     # packaged app without a console: log to nowhere
+    sys.stdout = sys.stdout or open(os.devnull, "w")
+    sys.stderr = sys.stderr or open(os.devnull, "w")
 
 from nicegui import run, ui
 
@@ -327,8 +337,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="LBO Agent desktop app")
     ap.add_argument("--browser", action="store_true", help="Open in the browser instead of a desktop window")
     ap.add_argument("--port", type=int, default=None)
-    args = ap.parse_args(argv)
-    L.OUTPUT_DIR.mkdir(exist_ok=True)
+    args, _ = ap.parse_known_args(argv)          # macOS may pass -psn_... to a bundled app
+    L.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     ui.run(root=main_page, title="LBO Agent", language="it-IT" if L.get_language() == "it" else "en-US",
            native=not args.browser, reload=False, window_size=None if args.browser else (1320, 920),
            port=args.port or (8765 if args.browser else None), show=False, favicon="📈",
@@ -336,4 +346,6 @@ def main(argv=None):
 
 
 if __name__ in {"__main__", "__mp_main__"}:
+    multiprocessing.freeze_support()             # required by the native window in a packaged app
+    faulthandler.register(signal.SIGUSR1)        # `kill -USR1 <pid>` prints every thread's stack (debugging)
     main()

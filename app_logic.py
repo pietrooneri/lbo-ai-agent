@@ -10,6 +10,7 @@ on screen or on disk; the language choice lives in app_settings.json.
 import json
 import os
 import re
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -23,8 +24,12 @@ from lbo_engine import run_model
 
 KEYRING_SERVICE = "lbo-agent"
 KEYRING_USER = "anthropic-api-key"
-OUTPUT_DIR = Path(__file__).parent / "output"
-SETTINGS_FILE = Path(__file__).parent / "app_settings.json"
+# Packaged app (PyInstaller): projects where the user can find them, settings in Application Support.
+# From source: next to the code, as before.
+FROZEN = getattr(sys, "frozen", False)
+OUTPUT_DIR = Path.home() / "Documents" / "LBO Agent" if FROZEN else Path(__file__).parent / "output"
+SETTINGS_FILE = (Path.home() / "Library" / "Application Support" / "LBO Agent" / "app_settings.json" if FROZEN
+                 else Path(__file__).parent / "app_settings.json")
 LANGUAGES = {"it": "Italiano", "en": "English"}
 
 # ---------------------------------------------------------------------------
@@ -42,6 +47,7 @@ def get_language(settings_file: Path = SETTINGS_FILE) -> str:
 def set_language(lang: str, settings_file: Path = SETTINGS_FILE) -> None:
     if lang not in LANGUAGES:
         raise ValueError(f"Unsupported language {lang!r}")
+    Path(settings_file).parent.mkdir(parents=True, exist_ok=True)
     Path(settings_file).write_text(json.dumps({"language": lang}))
 
 
