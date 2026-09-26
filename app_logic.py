@@ -177,7 +177,7 @@ TEXT: Dict[str, Dict[str, str]] = {
         "description_ph": "Es.: produttore italiano di valvole industriali, 4 stabilimenti, clienti nel settore "
                           "oil&gas e utilities",
         "revenue": "Fatturato (milioni €)", "ebitda": "EBITDA (milioni €)",
-        "asking": "Prezzo chiesto (multiplo EBITDA)", "what_to_know": "Cosa vuoi sapere",
+        "asking": "Prezzo chiesto (x EBITDA)", "what_to_know": "Cosa vuoi sapere",
         "q_downside": "Cosa succede se le cose vanno peggio del previsto (downside)",
         "q_irr": "Prezzo massimo per ottenere un rendimento (IRR) del",
         "q_moic": "Quanto debito serve per moltiplicare l'investimento (MOIC) per",
@@ -223,6 +223,8 @@ TEXT: Dict[str, Dict[str, str]] = {
         "p_goal_irr": "un IRR del {v}%", "p_goal_moic": "un MOIC di {v}x",
         "p_compare": "Confronto gli scenari", "p_excel": "Preparo il file Excel", "p_other": "Eseguo {t}",
         "base_case": "Caso base",
+        "k_ebitda": "EBITDA di partenza", "k_ebitda_h": "Margine {m} sul fatturato · {src}",
+        "src_provided": "dato da te", "src_estimated": "stimato dall'agente",
         "k_ev": "Prezzo (valore d'impresa)", "k_ev_h": "Quanto si paga per l'intera azienda, debito compreso",
         "k_eq": "Equity del fondo", "k_eq_h": "I soldi che il fondo mette di tasca propria",
         "k_moic_h": "Quante volte il fondo moltiplica i soldi investiti",
@@ -261,7 +263,7 @@ TEXT: Dict[str, Dict[str, str]] = {
         "description": "Company description",
         "description_ph": "E.g.: Italian maker of industrial valves, 4 plants, clients in oil & gas and utilities",
         "revenue": "Revenue (€ millions)", "ebitda": "EBITDA (€ millions)",
-        "asking": "Asking price (EBITDA multiple)", "what_to_know": "What do you want to know",
+        "asking": "Asking price (x EBITDA)", "what_to_know": "What do you want to know",
         "q_downside": "What happens if things go worse than planned (downside)",
         "q_irr": "Maximum price for an annual return (IRR) of",
         "q_moic": "How much debt is needed to multiply the investment (MOIC) by",
@@ -307,6 +309,8 @@ TEXT: Dict[str, Dict[str, str]] = {
         "p_goal_irr": "a {v}% IRR", "p_goal_moic": "a {v}x MOIC",
         "p_compare": "Comparing scenarios", "p_excel": "Preparing the Excel file", "p_other": "Running {t}",
         "base_case": "Base case",
+        "k_ebitda": "Starting EBITDA", "k_ebitda_h": "{m} margin on revenue · {src}",
+        "src_provided": "given by you", "src_estimated": "estimated by the agent",
         "k_ev": "Price (enterprise value)", "k_ev_h": "What is paid for the whole company, debt included",
         "k_eq": "Fund equity", "k_eq_h": "The money the fund puts in itself",
         "k_moic_h": "How many times the fund multiplies the money invested",
@@ -463,7 +467,12 @@ def scenario_summaries(session: DealSession) -> List[dict]:
 def kpis(session: DealSession, lang: str = "it") -> List[dict]:
     s = scenario_summaries(session)[0]
     irr = s["irr"]
+    field = session.generation.trace.get("entry_ebitda") if session.generation else None
+    given = field is not None and field.source == "provided"
     return [
+        {"label": t(lang, "k_ebitda"), "value": money(s["entry_ltm_ebitda"], lang),
+         "hint": t(lang, "k_ebitda_h", m=pct(s["ltm_margin"], lang),
+                   src=t(lang, "src_provided" if given else "src_estimated"))},
         {"label": t(lang, "k_ev"), "value": money(s["entry_ev"], lang), "hint": t(lang, "k_ev_h")},
         {"label": t(lang, "k_eq"), "value": money(s["entry_equity"], lang), "hint": t(lang, "k_eq_h")},
         {"label": "MOIC", "value": mult(s["moic"], lang), "hint": t(lang, "k_moic_h")},

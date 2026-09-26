@@ -193,9 +193,9 @@ def main_page():
                 description = ui.textarea(T("description"), placeholder=T("description_ph")).classes(
                     "w-full").props("outlined rows=3")
                 with ui.row().classes("w-full q-gutter-md"):
-                    revenue = ui.number(T("revenue"), min=0, format="%.1f").props("outlined clearable")
-                    ebitda = ui.number(T("ebitda"), min=0, format="%.1f").props("outlined clearable")
-                    asking = ui.number(T("asking"), min=0, format="%.1f").props("outlined clearable")
+                    revenue = ui.number(T("revenue"), min=0, format="%.1f").classes("w-64").props("outlined clearable")
+                    ebitda = ui.number(T("ebitda"), min=0, format="%.1f").classes("w-64").props("outlined clearable")
+                    asking = ui.number(T("asking"), min=0, format="%.1f").classes("w-64").props("outlined clearable")
                 ui.label(T("what_to_know")).classes("text-subtitle2 q-mt-sm")
                 downside = ui.checkbox(T("q_downside"), value=True)
                 with ui.row().classes("items-center"):

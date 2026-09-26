@@ -84,7 +84,8 @@ def test_full_offline_analysis(tmp_path):
     rows = L.table_rows(a.session)
     assert [r["scenario"] for r in rows] == ["Caso base", "Downside"]
     assert rows[0]["irr"].endswith("%") and "," in rows[0]["irr"]
-    assert [k["label"] for k in L.kpis(a.session)][-1] == "IRR"
+    labels = [k["label"] for k in L.kpis(a.session)]
+    assert labels[0] == "EBITDA di partenza" and labels[-1] == "IRR"
     assert len(L.irr_chart(a.session)["series"][0]["data"]) == 2
     assert len(L.debt_chart(a.session)["series"]) == 2
 
